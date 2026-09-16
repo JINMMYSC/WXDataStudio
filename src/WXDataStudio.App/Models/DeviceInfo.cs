@@ -14,7 +14,11 @@ public sealed record DeviceInfo
     public string WeChatVersion { get; init; } = "";
     public string WeChatVersionCode { get; init; } = "";
     public string AccountDirectory { get; init; } = "";
+    public string ExternalAccountDirectory { get; init; } = "";
     public string MainDatabasePath { get; init; } = "";
+    public string ExternalMediaRoot => string.IsNullOrWhiteSpace(ExternalAccountDirectory)
+        ? ""
+        : $"/sdcard/Android/data/com.tencent.mm/MicroMsg/{ExternalAccountDirectory}";
 
     public bool MatchesLockedBaseline =>
         Model.Contains("MIX 2S", StringComparison.OrdinalIgnoreCase)

@@ -40,6 +40,7 @@ public sealed class AdbService
         var versionName = ExtractValue(dump.StdOut, "versionName=");
         var versionCode = ExtractVersionCode(dump.StdOut);
         var account = root ? await FindAccountDirectoryAsync() : "";
+        var external = await FindExternalAccountDirectoryAsync();
         var db = string.IsNullOrWhiteSpace(account)
             ? ""
             : $"/data/user/0/com.tencent.mm/MicroMsg/{account}/EnMicroMsg.db";
@@ -58,6 +59,7 @@ public sealed class AdbService
             WeChatVersion = versionName,
             WeChatVersionCode = versionCode,
             AccountDirectory = account,
+            ExternalAccountDirectory = external,
             MainDatabasePath = db
         };
     }
@@ -105,6 +107,18 @@ public sealed class AdbService
         var parentSlash = parent.LastIndexOf('/');
         return parentSlash < 0 ? parent : parent[(parentSlash + 1)..];
     }
+    private async Task<string> FindExternalAccountDirectoryAsync()
+    {
+        const string root = "/sdcard/Android/data/com.tencent.mm/MicroMsg";
+        var result = await ShellAsync(
+            $"find {root} -maxdepth 2 -type d -name image2 2>/dev/null | head -n 1");
+        var path = result.StdOut.Trim();
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var parent = path[..path.LastIndexOf('/')];
+        var slash = parent.LastIndexOf('/');
+        return slash >= 0 ? parent[(slash + 1)..] : parent;
+    }
+
     private static string ExtractValue(string text, string marker)
     {
         foreach (var line in text.Split('\n'))

@@ -13,7 +13,9 @@
                     <TextBlock Text="WXDataStudio" FontSize="22" FontWeight="SemiBold" Margin="0,0,22,0"/>
                     <Button Content="设备" Padding="14,7" Margin="0,0,8,0" Click="OnRefreshDevice"/>
                     <Button Content="快照" Padding="14,7" Margin="0,0,8,0" Click="OnCreateSnapshot"/>
+                    <Button Content="解析快照" Padding="14,7" Margin="0,0,8,0" Click="OnAnalyzeSnapshot"/>
                     <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace"/>
+                    <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff"/>
                     <Button Content="完整性检查" Padding="14,7" Click="OnRunIntegrityCheck"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -82,8 +84,8 @@
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
                         <CheckBox x:Name="ReadOnlyFlag" Content="敏感/交易凭证类：强制只读" IsChecked="True" IsEnabled="False" Visibility="Collapsed" Margin="0,0,0,8"/>
                         <WrapPanel>
-                            <Button Content="保存工作副本" Padding="12,7" Margin="0,0,8,0" IsEnabled="False" x:Name="EditButton"/>
-                            <Button Content="撤销" Padding="12,7" IsEnabled="False" x:Name="UndoButton"/>
+                            <Button Content="保存工作副本" Padding="12,7" Margin="0,0,8,0" IsEnabled="False" x:Name="EditButton" Click="OnSaveWorkspaceMessage"/>
+                            <Button Content="撤销" Padding="12,7" IsEnabled="False" x:Name="UndoButton" Click="OnUndoWorkspaceMessage"/>
                         </WrapPanel>
                         <TextBlock Text="当前适配器：wechat-android-8.0.76-3141" Margin="0,9,0,0" FontSize="11" Foreground="#6A737D"/>
                         <TextBlock Text="真实写回尚未开启；先完成解析、快照、回滚和一致性验证。" Foreground="#9A6700" FontSize="11" TextWrapping="Wrap"/>
