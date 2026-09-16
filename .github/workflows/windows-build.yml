@@ -28,7 +28,6 @@ jobs:
 
       - name: Restore
         run: dotnet restore src/WXDataStudio.App/WXDataStudio.App.csproj
-
       - name: Build
         run: dotnet build src/WXDataStudio.App/WXDataStudio.App.csproj -c Release --no-restore
 
@@ -43,6 +42,17 @@ jobs:
           -p:DebugType=None
           -p:DebugSymbols=false
           -o artifacts/WXDataStudio-win-x64
+
+      - name: Bundle Android Platform Tools
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\platform-tools.zip"
+          $out = "$env:RUNNER_TEMP\platform-tools"
+          Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $out -Force
+          $dest = "artifacts/WXDataStudio-win-x64/tools/android/platform-tools"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item "$out/platform-tools/*" $dest -Recurse -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
