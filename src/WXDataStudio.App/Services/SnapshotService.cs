@@ -47,16 +47,10 @@ public sealed class SnapshotService
                 var exists = await _adb.RootShellAsync($"test -f {source}");
                 if (!exists.Success) continue;
 
-                var temp = $"{remoteRoot}/{name}";
-                var copy = await _adb.RootShellAsync(
-                    $"cp -f {source} {temp} && chown shell:shell {temp} && chmod 0644 {temp}");
-                if (!copy.Success)
-                    throw new InvalidOperationException($"Failed to stage {name}: {copy.StdErr}");
-
                 var local = Path.Combine(root, name);
-                var pull = await _adb.PullAsync(temp, local);
+                var pull = await _adb.RootPullFileAsync(source, local);
                 if (!pull.Success || !File.Exists(local))
-                    throw new InvalidOperationException($"Failed to pull {name}: {pull.StdErr}");
+                    throw new InvalidOperationException($"Failed to read {name}: {pull.StdErr}");
 
                 var bytes = await File.ReadAllBytesAsync(local);
                 var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();

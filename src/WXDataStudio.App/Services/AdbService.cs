@@ -76,6 +76,32 @@ public sealed class AdbService
     public Task<CommandResult> ShellAsync(string command) =>
         RunAsync($"shell {command}");
 
+    public async Task<CommandResult> RootPullFileAsync(string remotePath, string localPath)
+    {
+        var directory = Path.GetDirectoryName(localPath);
+        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+        var psi = new ProcessStartInfo
+        {
+            FileName = _adbPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("exec-out");
+        psi.ArgumentList.Add("su");
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add($"cat '{remotePath.Replace("'", "'\\''", StringComparison.Ordinal)}'");
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Unable to start adb exec-out.");
+        await using (var file = File.Create(localPath))
+            await process.StandardOutput.BaseStream.CopyToAsync(file);
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0 && File.Exists(localPath)) File.Delete(localPath);
+        return new CommandResult(process.ExitCode, "", stderr);
+    }
+
     public Task<CommandResult> RootShellAsync(string command)
     {
         var escaped = command.Replace("\"", "\\\"");
