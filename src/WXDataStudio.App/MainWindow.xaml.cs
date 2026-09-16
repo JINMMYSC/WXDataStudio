@@ -143,7 +143,36 @@ public partial class MainWindow : Window
         PropertySender.Text = message.Sender;
         PropertyContent.Text = message.Content;
         PropertyAttachment.Text = message.Attachment ?? string.Empty;
+        PropertyDirection.Text = message.Sender == "Me" ? "我发送" : "对方 / 系统";
+        PropertyStatus.Text = "已载入（当前为预览/工作副本）";
+        PropertyLocalId.Text = "-";
+        PropertyServerId.Text = "-";
+        PropertyQuote.Text = string.Empty;
+        PropertyAtInfo.Text = string.Empty;
+
+        MediaType.Text = message.Attachment is null ? string.Empty : message.Type;
+        MediaOriginalPath.Text = message.Attachment ?? string.Empty;
+        MediaThumbPath.Text = string.Empty;
+        MediaDimensions.Text = string.Empty;
+        MediaSize.Text = string.Empty;
+        MediaDuration.Text = string.Empty;
+
+        DateDisplay.Text = message.Time;
+        DateSort.Text = message.Time;
+        DateTimezone.Text = TimeZoneInfo.Local.DisplayName;
+        CardTitle.Text = string.Empty;
+        CardDescription.Text = string.Empty;
+        CardUrl.Text = string.Empty;
+        CardAppId.Text = string.Empty;
+        LocationAddress.Text = string.Empty;
+        LocationLatLng.Text = string.Empty;
+
+        TransactionType.Text = message.Sensitive ? message.Type : string.Empty;
+        TransactionAmount.Text = string.Empty;
+        TransactionStatus.Text = message.Sensitive ? "只读解析" : string.Empty;
+        TransactionMemo.Text = message.Sensitive ? message.Content : string.Empty;
         ReadOnlyFlag.Visibility = message.Sensitive ? Visibility.Visible : Visibility.Collapsed;
+        EditorTabs.SelectedIndex = message.Sensitive ? 5 : message.Attachment is not null ? 2 : 1;
         EditButton.IsEnabled = false;
         UndoButton.IsEnabled = false;
     }
