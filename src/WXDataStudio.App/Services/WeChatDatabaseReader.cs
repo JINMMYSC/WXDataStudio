@@ -71,9 +71,9 @@ public sealed class WeChatDatabaseReader
     private static async Task<IReadOnlyList<ConversationItem>> QueryConversationsAsync(
         SqliteConnection c, HashSet<string> cols, bool contactExists, int limit)
     {
-        var time = Pick(cols, "conversationTime", "0");
-        var content = Pick(cols, "content", "''");
-        var user = Pick(cols, "username", "''");
+        var time = cols.Contains("conversationTime") ? "cv.[conversationTime]" : "0";
+        var content = cols.Contains("content") ? "cv.[content]" : "''";
+        var user = cols.Contains("username") ? "cv.[username]" : "''";
         var join = contactExists ? "LEFT JOIN rcontact rc ON rc.username=cv.username" : "";
         var remark = contactExists ? "COALESCE(rc.conRemark,'')" : "''";
         var nick = contactExists ? "COALESCE(rc.nickname,'')" : "''";

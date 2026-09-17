@@ -20,18 +20,23 @@ public partial class MainWindow : Window
     private readonly WorkspaceService _workspaceService = new();
     private readonly WorkspaceDiffService _diffService = new();
     private readonly MediaLocatorService _mediaLocator;
+    private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
+    private readonly DatabaseCredentialResolver _credentialResolver;
     private DeviceInfo? _device;
     private WorkspaceDocument? _workspace;
     private ConversationItem? _currentConversation;
     private IReadOnlyList<WeChatMessage> _currentMessages = Array.Empty<WeChatMessage>();
     private string? _currentDbPath;
     private string? _latestSnapshotDirectory;
+    private DatabaseCredentialResolution? _credential;
 
     public MainWindow()
     {
         InitializeComponent();
         _snapshots = new SnapshotService(_adb);
         _mediaLocator = new MediaLocatorService(_adb);
+        _legacyKeyCandidates = new LegacyWeChatKeyCandidateService(_adb);
+        _credentialResolver = new DatabaseCredentialResolver(_dbReader, _legacyKeyCandidates);
         LogList.ItemsSource = _logs;
         ConversationList.ItemsSource = new[] { "Device & adapter", "Demo chat", "Demo group" };
         _demoMessages = BuildDemoMessages();
@@ -100,16 +105,31 @@ public partial class MainWindow : Window
             AddLog($"DB inspect: {info.Status}; {info.Size:N0} bytes.");
             AddLog($"DB header: {info.HeaderHex[..Math.Min(32, info.HeaderHex.Length)]}...");
 
-            var password = Environment.GetEnvironmentVariable("WXDS_DB_PASSWORD");
-            if (info.AppearsEncrypted && string.IsNullOrWhiteSpace(password))
+            DatabaseOpenOptions options;
+            if (info.AppearsEncrypted)
             {
-                AddLog("Encrypted WCDB detected. Read-only credential provider is not resolved yet.");
-                MessageBox.Show("已确认这是加密 WCDB。\n当前 v0.2 已完成真实表解析器，但还没有取得本机 8.0.76 的数据库打开参数。\n不会猜测或改动原库。",
-                    "数据库已识别", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
+                AddLog("Encrypted WCDB detected. Resolving bounded local read-only key candidates...");
+                _credential = await _credentialResolver.ResolveAsync(db);
+                if (!_credential.Success || string.IsNullOrWhiteSpace(_credential.Password))
+                {
+                    AddLog("Database credential resolution did not find a valid candidate.");
+                    MessageBox.Show("已确认这是加密 WCDB，但当前设备派生候选仍未成功打开数据库。\n原库没有被修改。",
+                        "数据库仍为加密状态", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                options = new DatabaseOpenOptions
+                {
+                    Password = _credential.Password,
+                    CipherCompatibility = _credential.CipherCompatibility,
+                    ReadOnly = true
+                };
+                AddLog($"Database opened read-only using source {_credential.Source}, compatibility {_credential.CipherCompatibility}.");
             }
-
-            var options = new DatabaseOpenOptions { Password = password, CipherCompatibility = 1 };
+            else
+            {
+                _credential = new DatabaseCredentialResolution(true, null, 0, "plain", "Plain SQLite");
+                options = new DatabaseOpenOptions { ReadOnly = true };
+            }
             var conversations = await _dbReader.LoadConversationsAsync(db, options);
             ConversationList.ItemsSource = conversations;
             _workspace = null;
@@ -202,8 +222,14 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(_currentDbPath)) return;
             try
             {
-                var password = Environment.GetEnvironmentVariable("WXDS_DB_PASSWORD");
-                var options = new DatabaseOpenOptions { Password = password, CipherCompatibility = 1 };
+                var options = _credential is { Success: true }
+                    ? new DatabaseOpenOptions
+                    {
+                        Password = _credential.Password,
+                        CipherCompatibility = _credential.CipherCompatibility,
+                        ReadOnly = true
+                    }
+                    : new DatabaseOpenOptions { ReadOnly = true };
                 _currentMessages = await _dbReader.LoadMessagesAsync(
                     _currentDbPath, conversation.Username, options);
                 MessageList.ItemsSource = _currentMessages;
