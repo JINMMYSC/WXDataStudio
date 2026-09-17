@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+artifacts/
+*.user
+*.suo
+*.tmp
+*.log
+
+# Local device data must never be committed
+snapshots/
+device_snapshots/
+packages/wechat/
+analysis/

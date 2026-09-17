@@ -1,0 +1,35 @@
+{
+  "id": "wechat-android-8.0.76-3141",
+  "displayName": "WeChat Android 8.0.76 (3141)",
+  "packageName": "com.tencent.mm",
+  "versionName": "8.0.76",
+  "versionCode": 3141,
+  "apkSha256": [
+    "04792eb19a566395a9fabee9a50be80245826cb774ec64637a22f7f28acd4054"
+  ],
+  "target": {
+    "device": "Xiaomi MIX 2S",
+    "codename": "polaris",
+    "android": "9",
+    "sdk": 28,
+    "miui": "V10.3.5.0.PDGCNXM",
+    "abi": "arm64-v8a",
+    "requiresRootForPrivateData": true
+  },
+  "paths": {
+    "dataRoot": "/data/user/0/com.tencent.mm",
+    "microMsgRoot": "/data/user/0/com.tencent.mm/MicroMsg",
+    "mainDatabaseName": "EnMicroMsg.db",
+    "walSuffix": "-wal",
+    "shmSuffix": "-shm"
+  },
+  "capabilities": {
+    "deviceDetection": "planned",
+    "snapshot": "planned",
+    "readMessages": "planned",
+    "readMedia": "planned",
+    "workspaceEdit": "planned",
+    "transactionMessages": "read-only",
+    "writeBack": "disabled-until-integrity-gates-pass"
+  }
+}
