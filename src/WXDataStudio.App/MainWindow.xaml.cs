@@ -29,6 +29,9 @@ public partial class MainWindow : Window
     private string? _currentDbPath;
     private string? _latestSnapshotDirectory;
     private DatabaseCredentialResolution? _credential;
+    private DatabaseOpenOptions? _currentDbOptions;
+    private string? _manualDatabaseKey;
+    private bool _manualDatabaseKeyIsRawHex;
 
     public MainWindow()
     {
@@ -92,6 +95,71 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnDatabaseKey(object sender, RoutedEventArgs e)
+    {
+        var input = DatabaseKeyDialog.Show(this, _manualDatabaseKeyIsRawHex);
+        if (input is null) return;
+        _manualDatabaseKey = string.IsNullOrWhiteSpace(input.Value) ? null : input.Value;
+        _manualDatabaseKeyIsRawHex = input.IsRawHex;
+        _currentDbOptions = null;
+        AddLog(_manualDatabaseKey is null
+            ? "Session database key cleared."
+            : "Session database key supplied (content not logged)." );
+    }
+
+    private async Task<DatabaseOpenOptions?> ResolveDatabaseOptionsAsync(string db, bool encrypted)
+    {
+        if (!encrypted)
+        {
+            _credential = new DatabaseCredentialResolution(true, null, 0, "plain", "Plain SQLite");
+            return new DatabaseOpenOptions { ReadOnly = true };
+        }
+
+        if (!string.IsNullOrWhiteSpace(_manualDatabaseKey))
+        {
+            var profiles = new List<DatabaseOpenOptions>();
+            foreach (var legacy in new[] { true, false })
+            foreach (var compat in legacy ? new[] { 0 } : new[] { 1, 3, 4 })
+            {
+                profiles.Add(new DatabaseOpenOptions
+                {
+                    Password = _manualDatabaseKeyIsRawHex ? null : _manualDatabaseKey,
+                    RawKeyHex = _manualDatabaseKeyIsRawHex ? _manualDatabaseKey : null,
+                    CipherCompatibility = compat == 0 ? 1 : compat,
+                    UseLegacyWeChatCipher = legacy,
+                    ReadOnly = true
+                });
+            }
+            foreach (var profile in profiles)
+            {
+                try
+                {
+                    var tables = await _dbReader.ListTablesAsync(db, profile);
+                    if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
+                        tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    {
+                        AddLog($"Manual session key opened database read-only; profile={(profile.UseLegacyWeChatCipher ? "wechat-legacy" : "compat-" + profile.CipherCompatibility)}.");
+                        return profile;
+                    }
+                }
+                catch { }
+            }
+            throw new InvalidOperationException("本次会话输入的数据库密钥无法以受支持的只读配置打开该快照。");
+        }
+
+        AddLog("Encrypted WCDB detected. Resolving bounded local read-only key candidates...");
+        _credential = await _credentialResolver.ResolveAsync(db);
+        if (!_credential.Success || string.IsNullOrWhiteSpace(_credential.Password)) return null;
+        AddLog($"Database opened read-only using source {_credential.Source}; profile={(_credential.CipherCompatibility == 0 ? "wechat-legacy" : "compat-" + _credential.CipherCompatibility)}.");
+        return new DatabaseOpenOptions
+        {
+            Password = _credential.Password,
+            CipherCompatibility = _credential.CipherCompatibility == 0 ? 1 : _credential.CipherCompatibility,
+            UseLegacyWeChatCipher = _credential.CipherCompatibility == 0,
+            ReadOnly = true
+        };
+    }
+
     private async void OnAnalyzeSnapshot(object sender, RoutedEventArgs e)
     {
         try
@@ -105,31 +173,15 @@ public partial class MainWindow : Window
             AddLog($"DB inspect: {info.Status}; {info.Size:N0} bytes.");
             AddLog($"DB header: {info.HeaderHex[..Math.Min(32, info.HeaderHex.Length)]}...");
 
-            DatabaseOpenOptions options;
-            if (info.AppearsEncrypted)
+            var options = await ResolveDatabaseOptionsAsync(db, info.AppearsEncrypted);
+            if (options is null)
             {
-                AddLog("Encrypted WCDB detected. Resolving bounded local read-only key candidates...");
-                _credential = await _credentialResolver.ResolveAsync(db);
-                if (!_credential.Success || string.IsNullOrWhiteSpace(_credential.Password))
-                {
-                    AddLog("Database credential resolution did not find a valid candidate.");
-                    MessageBox.Show("已确认这是加密 WCDB，但当前设备派生候选仍未成功打开数据库。\n原库没有被修改。",
-                        "数据库仍为加密状态", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-                options = new DatabaseOpenOptions
-                {
-                    Password = _credential.Password,
-                    CipherCompatibility = _credential.CipherCompatibility,
-                    ReadOnly = true
-                };
-                AddLog($"Database opened read-only using source {_credential.Source}, compatibility {_credential.CipherCompatibility}.");
+                AddLog("Automatic credential resolution did not open this WCDB snapshot.");
+                MessageBox.Show("已确认这是加密 WCDB。自动只读解析未能打开数据库。\n你可以点击“数据库密钥”输入已知的文本口令或 Raw Hex；密钥只保存在本次进程内存中。\n原库没有被修改。",
+                    "数据库仍为加密状态", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
-            else
-            {
-                _credential = new DatabaseCredentialResolution(true, null, 0, "plain", "Plain SQLite");
-                options = new DatabaseOpenOptions { ReadOnly = true };
-            }
+            _currentDbOptions = options;
             var conversations = await _dbReader.LoadConversationsAsync(db, options);
             ConversationList.ItemsSource = conversations;
             _workspace = null;
@@ -222,14 +274,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(_currentDbPath)) return;
             try
             {
-                var options = _credential is { Success: true }
-                    ? new DatabaseOpenOptions
-                    {
-                        Password = _credential.Password,
-                        CipherCompatibility = _credential.CipherCompatibility,
-                        ReadOnly = true
-                    }
-                    : new DatabaseOpenOptions { ReadOnly = true };
+                var options = _currentDbOptions ?? new DatabaseOpenOptions { ReadOnly = true };
                 _currentMessages = await _dbReader.LoadMessagesAsync(
                     _currentDbPath, conversation.Username, options);
                 MessageList.ItemsSource = _currentMessages;

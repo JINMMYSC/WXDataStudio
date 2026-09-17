@@ -3,7 +3,9 @@ namespace WXDataStudio.App.Models;
 public sealed class DatabaseOpenOptions
 {
     public string? Password { get; init; }
+    public string? RawKeyHex { get; init; }
     public int CipherCompatibility { get; init; } = 1;
+    public bool UseLegacyWeChatCipher { get; init; }
     public bool ReadOnly { get; init; } = true;
 }
 

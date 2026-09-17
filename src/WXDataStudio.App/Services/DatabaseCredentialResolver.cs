@@ -30,6 +30,25 @@ public sealed class DatabaseCredentialResolver
                 "No bounded device-derived key candidates were available.");
         foreach (var candidate in candidates)
         {
+            try
+            {
+                var legacy = new DatabaseOpenOptions
+                {
+                    Password = candidate.Password,
+                    UseLegacyWeChatCipher = true,
+                    ReadOnly = true
+                };
+                var tables = await _reader.ListTablesAsync(databasePath, legacy);
+                if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
+                    tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    return new(true, candidate.Password, 0, candidate.Source,
+                        "Database opened with WeChat legacy SQLCipher profile.");
+            }
+            catch
+            {
+                // Try standard SQLCipher compatibility profiles next.
+            }
+
             foreach (var compatibility in new[] { 1, 3, 4 })
             {
                 try

@@ -22,11 +22,16 @@ public sealed class LegacyWeChatKeyCandidateService
 
         var tokens = await ReadDeviceTokensAsync();
         var candidates = new List<DatabaseKeyCandidate>();
+        foreach (var uinVariant in ExpandUinVariants(uin))
         foreach (var item in tokens)
         {
-            var value = BuildLegacyKey(item.Value, uin);
-            if (string.IsNullOrWhiteSpace(value)) continue;
-            candidates.Add(new DatabaseKeyCandidate(value, item.Source));
+            var deviceFirst = BuildLegacyKey(item.Value, uinVariant);
+            if (!string.IsNullOrWhiteSpace(deviceFirst))
+                candidates.Add(new DatabaseKeyCandidate(deviceFirst, item.Source + ":device+uin"));
+
+            var uinFirst = BuildLegacyKey(uinVariant, item.Value);
+            if (!string.IsNullOrWhiteSpace(uinFirst))
+                candidates.Add(new DatabaseKeyCandidate(uinFirst, item.Source + ":uin+device"));
         }
 
         return candidates.DistinctBy(x => x.Password).ToArray();
@@ -40,6 +45,14 @@ public sealed class LegacyWeChatKeyCandidateService
         return md5[..7];
     }
 
+
+    internal static IReadOnlyList<string> ExpandUinVariants(string uin)
+    {
+        var list = new List<string> { uin.Trim() };
+        if (int.TryParse(uin, out var signed) && signed < 0)
+            list.Add(unchecked((uint)signed).ToString());
+        return list.Distinct().ToArray();
+    }
     private async Task<string> ReadUinAsync()
     {
         var paths = new[]
@@ -62,8 +75,8 @@ public sealed class LegacyWeChatKeyCandidateService
         if (string.IsNullOrWhiteSpace(xml)) return "";
         var patterns = new[]
         {
-            @"name=[""']_auth_uin[""'][^>]*value=[""'](?<v>\d+)[""']",
-            @"name=[""']_auth_uin[""'][^>]*>(?<v>\d+)<"
+            @"name=[""']_auth_uin[""'][^>]*value=[""'](?<v>-?\d+)[""']",
+            @"name=[""']_auth_uin[""'][^>]*>(?<v>-?\d+)<"
         };
         foreach (var pattern in patterns)
         {
@@ -97,4 +110,19 @@ public sealed class LegacyWeChatKeyCandidateService
         }
         return list;
     }
+
+    public async Task<LegacyKeyDiagnostics> DiagnoseAsync()
+    {
+        var uin = await ReadUinAsync();
+        var tokens = await ReadDeviceTokensAsync();
+        var count = 0;
+        if (!string.IsNullOrWhiteSpace(uin))
+            count = tokens.Select(x => BuildLegacyKey(x.Value, uin)).Where(x => x.Length > 0).Distinct().Count();
+        return new LegacyKeyDiagnostics(!string.IsNullOrWhiteSpace(uin), tokens.Select(x => x.Source).Distinct().ToArray(), count);
+    }
 }
+
+public sealed record LegacyKeyDiagnostics(
+    bool UinFound,
+    IReadOnlyList<string> TokenSources,
+    int CandidateCount);

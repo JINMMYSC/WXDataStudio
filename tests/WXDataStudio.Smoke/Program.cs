@@ -50,6 +50,31 @@ var meta = MessageMetadataParser.Parse(messages[2].Kind, messages[2].Content);
 Assert(meta.Title == "OpenAI", "card title parse mismatch");
 Assert(meta.Url == "https://openai.com", "card url parse mismatch");
 
+var legacyDbPath = Path.Combine(root, "legacy-encrypted.db");
+await using (var connection = new SqliteConnection($"Data Source={legacyDbPath}"))
+{
+    await connection.OpenAsync();
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "PRAGMA key='smoke-secret';PRAGMA cipher_use_hmac=OFF;PRAGMA cipher_page_size=1024;PRAGMA kdf_iter=4000;CREATE TABLE smoke(id INTEGER PRIMARY KEY, value TEXT);INSERT INTO smoke(value) VALUES('ok');";
+    await cmd.ExecuteNonQueryAsync();
+}
+var legacyTables = await reader.ListTablesAsync(legacyDbPath,
+    new DatabaseOpenOptions { Password = "smoke-secret", UseLegacyWeChatCipher = true });
+Assert(legacyTables.Contains("smoke"), "legacy SQLCipher profile open failed");
+
+var rawDbPath = Path.Combine(root, "raw-encrypted.db");
+const string rawHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+await using (var connection = new SqliteConnection($"Data Source={rawDbPath}"))
+{
+    await connection.OpenAsync();
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = $"PRAGMA key=\"x'{rawHex}'\";CREATE TABLE rawtest(id INTEGER PRIMARY KEY);";
+    await cmd.ExecuteNonQueryAsync();
+}
+var rawTables = await reader.ListTablesAsync(rawDbPath,
+    new DatabaseOpenOptions { RawKeyHex = rawHex, CipherCompatibility = 4 });
+Assert(rawTables.Contains("rawtest"), "raw hex SQLCipher open failed");
+
 var workspaceService = new WorkspaceService();
 var workspace = workspaceService.Create(root, conversations[0], messages);
 workspaceService.EditContent(workspace, 1, "edited hello");

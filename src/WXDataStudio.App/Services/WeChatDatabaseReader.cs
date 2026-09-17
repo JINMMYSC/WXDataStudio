@@ -135,20 +135,29 @@ public sealed class WeChatDatabaseReader
             DataSource = path,
             Mode = options.ReadOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWrite
         };
-        if (!string.IsNullOrWhiteSpace(options.Password))
-            builder.Password = options.Password;
-
         var connection = new SqliteConnection(builder.ConnectionString);
         await connection.OpenAsync();
-        if (!string.IsNullOrWhiteSpace(options.Password))
+        if (!string.IsNullOrWhiteSpace(options.Password) || !string.IsNullOrWhiteSpace(options.RawKeyHex))
         {
+            var keySql = !string.IsNullOrWhiteSpace(options.RawKeyHex)
+                ? $"PRAGMA key=\"x'{NormalizeHex(options.RawKeyHex)}'\";"
+                : $"PRAGMA key='{options.Password!.Replace("'", "''", StringComparison.Ordinal)}';";
             await using var pragma = connection.CreateCommand();
-            pragma.CommandText = $"PRAGMA cipher_compatibility={options.CipherCompatibility};";
+            pragma.CommandText = options.UseLegacyWeChatCipher
+                ? keySql + "PRAGMA cipher_use_hmac=OFF;PRAGMA cipher_page_size=1024;PRAGMA kdf_iter=4000;"
+                : $"PRAGMA cipher_compatibility={options.CipherCompatibility};" + keySql;
             await pragma.ExecuteNonQueryAsync();
         }
         return connection;
     }
 
+    private static string NormalizeHex(string value)
+    {
+        var hex = new string(value.Where(Uri.IsHexDigit).ToArray()).ToLowerInvariant();
+        if (hex.Length == 0 || hex.Length % 2 != 0)
+            throw new ArgumentException("Raw key must contain an even number of hexadecimal characters.");
+        return hex;
+    }
     private static async Task<bool> TableExistsAsync(SqliteConnection c, string name)
     {
         await using var cmd = c.CreateCommand();
