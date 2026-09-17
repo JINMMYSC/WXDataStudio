@@ -107,6 +107,7 @@ public sealed class AdbService
         var escaped = command.Replace("\"", "\\\"");
         return RunAsync($"shell su -c \"{escaped}\"");
     }
+
     private async Task<string> GetPropAsync(string name)
     {
         var result = await ShellAsync($"getprop {name}");

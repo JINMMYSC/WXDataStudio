@@ -29,7 +29,6 @@ public sealed class SnapshotService
             "WXDataStudio", "snapshots", stamp);
         Directory.CreateDirectory(root);
 
-        var remoteRoot = $"/data/local/tmp/wxds_{stamp}";
         var sourceRoot = $"/data/user/0/com.tencent.mm/MicroMsg/{device.AccountDirectory}";
         var files = new[] { "EnMicroMsg.db", "EnMicroMsg.db-wal", "EnMicroMsg.db-shm" };
         var pulled = new List<SnapshotFile>();
@@ -39,20 +38,20 @@ public sealed class SnapshotService
 
         try
         {
-            await _adb.RootShellAsync($"rm -rf {remoteRoot}; mkdir -p {remoteRoot}");
-
             foreach (var name in files)
             {
                 var source = $"{sourceRoot}/{name}";
-                var exists = await _adb.RootShellAsync($"test -f {source}");
+                var exists = await _adb.RootShellAsync($"test -f '{source}'");
                 if (!exists.Success) continue;
 
                 var local = Path.Combine(root, name);
                 var pull = await _adb.RootPullFileAsync(source, local);
                 if (!pull.Success || !File.Exists(local))
-                    throw new InvalidOperationException($"Failed to read {name}: {pull.StdErr}");
+                    throw new InvalidOperationException($"Failed to read {name} through root: {pull.StdErr}");
 
                 var bytes = await File.ReadAllBytesAsync(local);
+                if (bytes.LongLength == 0)
+                    throw new InvalidOperationException($"Root pull returned an empty file: {name}");
                 var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                 pulled.Add(new SnapshotFile(name, bytes.LongLength, hash));
                 log?.Invoke($"Snapshot file: {name} ({bytes.LongLength:N0} bytes)");
@@ -78,7 +77,6 @@ public sealed class SnapshotService
         }
         finally
         {
-            await _adb.RootShellAsync($"rm -rf {remoteRoot}");
             await _adb.LaunchWeChatAsync();
         }
     }
