@@ -141,7 +141,7 @@ var legacyTables = await reader.ListTablesAsync(legacyDbPath,
 Assert(legacyTables.Contains("smoke"), "legacy SQLCipher profile open failed");
 
 var sc1EncryptedPath = Path.Combine(root, "sc1-encrypted.db");
-await using (var connection = new SqliteConnection($"Data Source={sc1EncryptedPath}"))
+await using (var connection = new SqliteConnection($"Data Source={sc1EncryptedPath};Pooling=False"))
 {
     await connection.OpenAsync();
     await using var cmd = connection.CreateCommand();
