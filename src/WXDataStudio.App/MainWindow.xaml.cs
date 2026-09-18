@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private readonly MigrationReportExporter _migrationExporter = new();
     private readonly SnapshotCatalogService _snapshotCatalog = new();
     private readonly RollbackPackageService _rollbackPackages = new();
+    private readonly LegacySc1PageDecryptService _sc1Decrypt = new();
     private readonly MediaLocatorService _mediaLocator;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
@@ -249,12 +250,57 @@ public partial class MainWindow : Window
                 }
                 catch { }
             }
+
+            try
+            {
+                var derivedDir = Path.Combine(Path.GetDirectoryName(db) ?? ".", "derived");
+                var derived = Path.Combine(derivedDir, "EnMicroMsg.manual.sc1.decrypted.db");
+                var matched = _manualDatabaseKeyIsRawHex
+                    ? _sc1Decrypt.MatchesRawKey(db, _manualDatabaseKey)
+                    : _sc1Decrypt.MatchesPassword(db, _manualDatabaseKey);
+                if (matched)
+                {
+                    if (_manualDatabaseKeyIsRawHex)
+                        await _sc1Decrypt.DecryptWithRawKeyAsync(db, _manualDatabaseKey, derived);
+                    else
+                        await _sc1Decrypt.DecryptWithPasswordAsync(db, _manualDatabaseKey, derived);
+
+                    var tables = await _dbReader.ListTablesAsync(
+                        derived, new DatabaseOpenOptions { ReadOnly = true });
+                    if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
+                        tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    {
+                        _currentDbPath = derived;
+                        _credential = new DatabaseCredentialResolution(
+                            true,
+                            _manualDatabaseKeyIsRawHex ? null : _manualDatabaseKey,
+                            0,
+                            _manualDatabaseKeyIsRawHex ? "manual-raw-sc1" : "manual-pass-sc1",
+                            "Manual key opened a derived read-only SC1 plaintext copy.",
+                            derived);
+                        AddLog("Manual session key matched the SC1 page profile; using a derived read-only plaintext copy.");
+                        return new DatabaseOpenOptions { ReadOnly = true };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"Manual SC1 fallback did not open the database: {ex.Message}");
+            }
+
             throw new InvalidOperationException("本次会话输入的数据库密钥无法以受支持的只读配置打开该快照。");
         }
 
         AddLog("Encrypted WCDB detected. Resolving bounded local read-only key candidates...");
         _credential = await _credentialResolver.ResolveAsync(db);
-        if (!_credential.Success || string.IsNullOrWhiteSpace(_credential.Password)) return null;
+        if (!_credential.Success) return null;
+        if (!string.IsNullOrWhiteSpace(_credential.DecryptedPath))
+        {
+            _currentDbPath = _credential.DecryptedPath;
+            AddLog($"Database opened through derived read-only plaintext copy; source={_credential.Source}.");
+            return new DatabaseOpenOptions { ReadOnly = true };
+        }
+        if (string.IsNullOrWhiteSpace(_credential.Password)) return null;
         AddLog($"Database opened read-only using source {_credential.Source}; profile={(_credential.CipherCompatibility == 0 ? "wechat-legacy" : "compat-" + _credential.CipherCompatibility)}.");
         return new DatabaseOpenOptions
         {
@@ -290,7 +336,8 @@ public partial class MainWindow : Window
                 return;
             }
             _currentDbOptions = options;
-            var conversations = await _dbReader.LoadConversationsAsync(db, options);
+            var activeDb = _currentDbPath ?? db;
+            var conversations = await _dbReader.LoadConversationsAsync(activeDb, options);
             _currentConversations = conversations;
             ConversationList.ItemsSource = conversations;
             _workspace = null;
