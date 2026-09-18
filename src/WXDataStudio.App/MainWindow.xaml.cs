@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly WeChatDatabaseReader _dbReader = new();
     private readonly WorkspaceService _workspaceService = new();
     private readonly WorkspaceDiffService _diffService = new();
+    private readonly WorkspaceMediaService _workspaceMedia = new();
     private readonly MigrationReadinessService _migrationReadiness = new();
     private readonly MigrationReportExporter _migrationExporter = new();
     private readonly SnapshotCatalogService _snapshotCatalog = new();
@@ -311,6 +312,7 @@ public partial class MainWindow : Window
             _workspace = _workspaceService.Create(
                 _latestSnapshotDirectory, _currentConversation, _currentMessages);
             MessageList.ItemsSource = _workspace.Messages;
+            SetAddButtonsEnabled(true);
             AddLog($"Workspace created for {_currentConversation.EffectiveName}: {_workspace.Messages.Count} messages.");
             return;
         }
@@ -437,6 +439,7 @@ public partial class MainWindow : Window
                     _currentDbPath, conversation.Username, options);
                 MessageList.ItemsSource = _currentMessages;
                 _workspace = null;
+                SetAddButtonsEnabled(false);
                 AddLog($"Loaded {_currentMessages.Count:N0} messages: {conversation.EffectiveName}");
             }
             catch (Exception ex)
@@ -482,6 +485,84 @@ public partial class MainWindow : Window
                 break;
         }
     }
+
+    private void SetAddButtonsEnabled(bool enabled)
+    {
+        AddTextButton.IsEnabled = enabled;
+        AddImageButton.IsEnabled = enabled;
+        AddVideoButton.IsEnabled = enabled;
+        AddVoiceButton.IsEnabled = enabled;
+        AddFileButton.IsEnabled = enabled;
+        AddCardButton.IsEnabled = enabled;
+        AddEmojiButton.IsEnabled = enabled;
+        AddContactButton.IsEnabled = enabled;
+        AddLinkButton.IsEnabled = enabled;
+        AddQuoteButton.IsEnabled = enabled;
+    }
+
+    private async Task AddWorkspaceMessageAsync(
+        MessageKind kind, string content, string? fileFilter = null)
+    {
+        if (_workspace is null)
+        {
+            MessageBox.Show("请先选择会话并点击“工作副本”。", "新增消息",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        string? attachment = null;
+        if (!string.IsNullOrWhiteSpace(fileFilter))
+        {
+            var dialog = new OpenFileDialog { Filter = fileFilter, Multiselect = false };
+            if (dialog.ShowDialog(this) != true) return;
+            attachment = await _workspaceMedia.ImportAsync(_workspace, dialog.FileName);
+        }
+
+        var message = _workspaceService.AddMessage(_workspace, kind, content, attachment);
+        MessageList.ItemsSource = _workspace.Messages;
+        MessageList.Items.Refresh();
+        MessageList.SelectedItem = message;
+        MessageList.ScrollIntoView(message);
+        AddLog($"Workspace message added: {kind}, id={message.LocalId}.");
+    }
+
+    private async void OnAddText(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Text, "新文字消息");
+
+    private async void OnAddImage(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Image, "[图片]",
+            "图片|*.jpg;*.jpeg;*.png;*.webp;*.gif|所有文件|*.*");
+
+    private async void OnAddVideo(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Video, "[视频]",
+            "视频|*.mp4;*.mov;*.m4v|所有文件|*.*");
+
+    private async void OnAddVoice(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Voice, "[语音]",
+            "音频|*.amr;*.silk;*.mp3;*.m4a;*.wav|所有文件|*.*");
+
+    private async void OnAddFile(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.File, "[文件]", "所有文件|*.*");
+
+    private async void OnAddEmoji(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Emoji, "[表情]",
+            "表情/图片|*.gif;*.png;*.webp;*.jpg;*.jpeg|所有文件|*.*");
+
+    private async void OnAddCard(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Location,
+            "<msg location x=\"\" y=\"\" label=\"\" poiname=\"\" />");
+
+    private async void OnAddContact(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.ContactCard,
+            "<msg username=\"\" nickname=\"\" />");
+
+    private async void OnAddLink(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Link,
+            "<msg><appmsg><type>5</type><title>新链接</title><url></url></appmsg></msg>");
+
+    private async void OnAddQuote(object sender, RoutedEventArgs e) =>
+        await AddWorkspaceMessageAsync(MessageKind.Quote,
+            "<msg><appmsg><type>57</type><refermsg><displayname></displayname><content></content></refermsg></appmsg></msg>");
 
     private async void OnSaveWorkspaceMessage(object sender, RoutedEventArgs e)
     {
