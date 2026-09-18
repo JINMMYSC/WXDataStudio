@@ -139,7 +139,8 @@ public sealed class WeChatDatabaseReader
         var builder = new SqliteConnectionStringBuilder
         {
             DataSource = path,
-            Mode = options.ReadOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWrite
+            Mode = options.ReadOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWrite,
+            Pooling = false
         };
         var connection = new SqliteConnection(builder.ConnectionString);
         await connection.OpenAsync();
