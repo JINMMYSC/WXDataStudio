@@ -7,12 +7,14 @@ public sealed record DatabaseCredentialResolution(
     string? Password,
     int CipherCompatibility,
     string Source,
-    string Message);
+    string Message,
+    string? DecryptedPath = null);
 
 public sealed class DatabaseCredentialResolver
 {
     private readonly WeChatDatabaseReader _reader;
     private readonly LegacyWeChatKeyCandidateService _candidates;
+    private readonly LegacySc1PageDecryptService _sc1 = new();
 
     public DatabaseCredentialResolver(
         WeChatDatabaseReader reader,
@@ -74,6 +76,32 @@ public sealed class DatabaseCredentialResolver
                 {
                     // Candidate mismatch. Continue with the bounded local set.
                 }
+            }
+
+            try
+            {
+                if (_sc1.MatchesPassword(databasePath, candidate.Password))
+                {
+                    var derivedDir = Path.Combine(
+                        Path.GetDirectoryName(databasePath) ?? ".",
+                        "derived");
+                    var output = Path.Combine(derivedDir, "EnMicroMsg.sc1.decrypted.db");
+                    await _sc1.DecryptWithPasswordAsync(databasePath, candidate.Password, output);
+                    var tables = await _reader.ListTablesAsync(
+                        output, new DatabaseOpenOptions { ReadOnly = true });
+                    if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
+                        tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    {
+                        return new(true, candidate.Password, 0,
+                            candidate.Source + ":sc1-page",
+                            "Database was opened through a derived read-only SC1 plaintext copy.",
+                            output);
+                    }
+                }
+            }
+            catch
+            {
+                // Derived fallback is best-effort; continue the bounded candidate set.
             }
         }
 
