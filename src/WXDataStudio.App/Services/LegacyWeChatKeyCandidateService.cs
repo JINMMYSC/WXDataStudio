@@ -23,8 +23,13 @@ public sealed class LegacyWeChatKeyCandidateService
         var tokens = await ReadDeviceTokensAsync();
         var candidates = new List<DatabaseKeyCandidate>();
         foreach (var uinVariant in ExpandUinVariants(uin))
-        foreach (var item in tokens)
         {
+            var emptyDevice = BuildLegacyKey("", uinVariant);
+            if (!string.IsNullOrWhiteSpace(emptyDevice))
+                candidates.Add(new DatabaseKeyCandidate(emptyDevice, "empty-device+uin"));
+
+            foreach (var item in tokens)
+            {
             var deviceFirst = BuildLegacyKey(item.Value, uinVariant);
             if (!string.IsNullOrWhiteSpace(deviceFirst))
                 candidates.Add(new DatabaseKeyCandidate(deviceFirst, item.Source + ":device+uin"));
@@ -32,6 +37,7 @@ public sealed class LegacyWeChatKeyCandidateService
             var uinFirst = BuildLegacyKey(uinVariant, item.Value);
             if (!string.IsNullOrWhiteSpace(uinFirst))
                 candidates.Add(new DatabaseKeyCandidate(uinFirst, item.Source + ":uin+device"));
+            }
         }
 
         return candidates.DistinctBy(x => x.Password).ToArray();
@@ -39,8 +45,8 @@ public sealed class LegacyWeChatKeyCandidateService
 
     public static string BuildLegacyKey(string deviceToken, string uin)
     {
-        if (string.IsNullOrWhiteSpace(deviceToken) || string.IsNullOrWhiteSpace(uin)) return "";
-        var bytes = Encoding.UTF8.GetBytes(deviceToken.Trim() + uin.Trim());
+        if (string.IsNullOrWhiteSpace(uin)) return "";
+        var bytes = Encoding.UTF8.GetBytes((deviceToken ?? "").Trim() + uin.Trim());
         var md5 = Convert.ToHexString(MD5.HashData(bytes)).ToLowerInvariant();
         return md5[..7];
     }
@@ -108,7 +114,56 @@ public sealed class LegacyWeChatKeyCandidateService
                 if (cleaned.Length >= 6) list.Add((probe.Item1, cleaned));
             }
         }
-        return list;
+
+        foreach (var item in await ReadCompatibleInfoTokensAsync())
+            list.Add(item);
+
+        return list
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .DistinctBy(x => x.Value, StringComparer.OrdinalIgnoreCase)
+            .Take(64)
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<(string Source, string Value)>> ReadCompatibleInfoTokensAsync()
+    {
+        var paths = new[]
+        {
+            "/data/user/0/com.tencent.mm/MicroMsg/CompatibleInfo.cfg",
+            "/data/data/com.tencent.mm/MicroMsg/CompatibleInfo.cfg"
+        };
+        foreach (var path in paths)
+        {
+            var command =
+                $"if [ -f '{path}' ]; then " +
+                $"if command -v busybox >/dev/null 2>&1; then busybox strings '{path}'; " +
+                $"elif command -v strings >/dev/null 2>&1; then strings '{path}'; " +
+                $"else cat '{path}' | tr -cd '\\11\\12\\15\\40-\\176'; fi; fi";
+            var result = await _adb.RootShellAsync(command);
+            if (string.IsNullOrWhiteSpace(result.StdOut)) continue;
+            var values = ExtractCompatibleInfoCandidates(result.StdOut);
+            if (values.Count > 0)
+                return values.Select(x => ("CompatibleInfo.cfg", x)).ToArray();
+        }
+        return Array.Empty<(string Source, string Value)>();
+    }
+
+    internal static IReadOnlyList<string> ExtractCompatibleInfoCandidates(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return Array.Empty<string>();
+        var values = new List<string>();
+
+        foreach (Match match in Regex.Matches(text, @"(?<!\d)\d{14,18}(?!\d)"))
+            values.Add(match.Value);
+
+        foreach (Match match in Regex.Matches(text, @"(?<![A-Za-z0-9])[A-Fa-f0-9]{14,20}(?![A-Za-z0-9])"))
+            values.Add(match.Value);
+
+        return values
+            .Where(x => x.Length >= 14)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(16)
+            .ToArray();
     }
 
     public async Task<LegacyKeyDiagnostics> DiagnoseAsync()
