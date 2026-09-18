@@ -559,16 +559,35 @@ public partial class MainWindow : Window
     private void OnMessageFilterChanged(object sender, SelectionChangedEventArgs e) =>
         ApplyMessageFilter();
 
+    private void OnMessageSearchChanged(object sender, TextChangedEventArgs e) =>
+        ApplyMessageFilter();
+
     private void ApplyMessageFilter()
     {
         var index = MessageFilter?.SelectedIndex ?? 0;
+        var query = MessageSearchBox?.Text.Trim() ?? "";
         if (_workspace is not null)
         {
-            MessageList.ItemsSource = _workspace.Messages.Where(x => MatchesFilter(x.Kind, index)).ToArray();
+            MessageList.ItemsSource = _workspace.Messages
+                .Where(x => MatchesFilter(x.Kind, index))
+                .Where(x => MatchesSearch(
+                    query, x.Content, x.Sender, x.Attachment, x.LocalId.ToString()))
+                .ToArray();
             return;
         }
         if (_currentMessages.Count > 0)
-            MessageList.ItemsSource = _currentMessages.Where(x => MatchesFilter(x.Kind, index)).ToArray();
+            MessageList.ItemsSource = _currentMessages
+                .Where(x => MatchesFilter(x.Kind, index))
+                .Where(x => MatchesSearch(
+                    query, x.Content, x.Sender, x.ImgPath, x.LocalId.ToString()))
+                .ToArray();
+    }
+
+    private static bool MatchesSearch(string query, params string?[] values)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return true;
+        return values.Any(x => !string.IsNullOrWhiteSpace(x) &&
+            x.Contains(query, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool MatchesFilter(MessageKind kind, int index) => index switch
