@@ -17,11 +17,12 @@ public sealed class LegacyWeChatKeyCandidateService
 
     public async Task<IReadOnlyList<DatabaseKeyCandidate>> BuildAsync()
     {
-        var uin = await ReadUinAsync();
-        if (string.IsNullOrWhiteSpace(uin)) return Array.Empty<DatabaseKeyCandidate>();
+        var uins = await ReadUinsAsync();
+        if (uins.Count == 0) return Array.Empty<DatabaseKeyCandidate>();
 
         var tokens = await ReadDeviceTokensAsync();
         var candidates = new List<DatabaseKeyCandidate>();
+        foreach (var uin in uins)
         foreach (var uinVariant in ExpandUinVariants(uin))
         {
             var emptyDevice = BuildLegacyKey("", uinVariant);
@@ -30,17 +31,17 @@ public sealed class LegacyWeChatKeyCandidateService
 
             foreach (var item in tokens)
             {
-            var deviceFirst = BuildLegacyKey(item.Value, uinVariant);
-            if (!string.IsNullOrWhiteSpace(deviceFirst))
-                candidates.Add(new DatabaseKeyCandidate(deviceFirst, item.Source + ":device+uin"));
+                var deviceFirst = BuildLegacyKey(item.Value, uinVariant);
+                if (!string.IsNullOrWhiteSpace(deviceFirst))
+                    candidates.Add(new DatabaseKeyCandidate(deviceFirst, item.Source + ":device+uin"));
 
-            var uinFirst = BuildLegacyKey(uinVariant, item.Value);
-            if (!string.IsNullOrWhiteSpace(uinFirst))
-                candidates.Add(new DatabaseKeyCandidate(uinFirst, item.Source + ":uin+device"));
+                var uinFirst = BuildLegacyKey(uinVariant, item.Value);
+                if (!string.IsNullOrWhiteSpace(uinFirst))
+                    candidates.Add(new DatabaseKeyCandidate(uinFirst, item.Source + ":uin+device"));
             }
         }
 
-        return candidates.DistinctBy(x => x.Password).ToArray();
+        return candidates.DistinctBy(x => x.Password).Take(256).ToArray();
     }
 
     public static string BuildLegacyKey(string deviceToken, string uin)
@@ -59,37 +60,50 @@ public sealed class LegacyWeChatKeyCandidateService
             list.Add(unchecked((uint)signed).ToString());
         return list.Distinct().ToArray();
     }
-    private async Task<string> ReadUinAsync()
+    private async Task<IReadOnlyList<string>> ReadUinsAsync()
     {
         var paths = new[]
         {
             "/data/user/0/com.tencent.mm/shared_prefs/auth_info_key_prefs.xml",
-            "/data/data/com.tencent.mm/shared_prefs/auth_info_key_prefs.xml"
+            "/data/user/0/com.tencent.mm/shared_prefs/system_config_prefs.xml",
+            "/data/user/0/com.tencent.mm/shared_prefs/com.tencent.mm_preferences.xml",
+            "/data/data/com.tencent.mm/shared_prefs/auth_info_key_prefs.xml",
+            "/data/data/com.tencent.mm/shared_prefs/system_config_prefs.xml",
+            "/data/data/com.tencent.mm/shared_prefs/com.tencent.mm_preferences.xml"
         };
+        var values = new List<string>();
         foreach (var path in paths)
         {
             var result = await _adb.RootShellAsync($"cat '{path}' 2>/dev/null");
             if (!result.Success && string.IsNullOrWhiteSpace(result.StdOut)) continue;
-            var uin = ParseUin(result.StdOut);
-            if (!string.IsNullOrWhiteSpace(uin)) return uin;
+            values.AddRange(ParseUins(result.StdOut));
         }
-        return "";
+        return values.Distinct().Take(16).ToArray();
     }
 
-    internal static string ParseUin(string xml)
+    internal static string ParseUin(string xml) => ParseUins(xml).FirstOrDefault() ?? "";
+
+    public static IReadOnlyList<string> ParseUins(string xml)
     {
-        if (string.IsNullOrWhiteSpace(xml)) return "";
+        if (string.IsNullOrWhiteSpace(xml)) return Array.Empty<string>();
         var patterns = new[]
         {
             @"name=[""']_auth_uin[""'][^>]*value=[""'](?<v>-?\d+)[""']",
-            @"name=[""']_auth_uin[""'][^>]*>(?<v>-?\d+)<"
+            @"name=[""']_auth_uin[""'][^>]*>(?<v>-?\d+)<",
+            @"name=[""']default_uin[""'][^>]*value=[""'](?<v>-?\d+)[""']",
+            @"name=[""']default_uin[""'][^>]*>(?<v>-?\d+)<",
+            @"name=[""']last_login_uin[""'][^>]*value=[""'](?<v>-?\d+)[""']",
+            @"name=[""']last_login_uin[""'][^>]*>(?<v>-?\d+)<"
         };
+        var values = new List<string>();
         foreach (var pattern in patterns)
+        foreach (Match match in Regex.Matches(xml, pattern,
+                     RegexOptions.IgnoreCase | RegexOptions.Singleline))
         {
-            var match = Regex.Match(xml, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            if (match.Success) return match.Groups["v"].Value;
+            var value = match.Groups["v"].Value;
+            if (!string.IsNullOrWhiteSpace(value) && value != "0") values.Add(value);
         }
-        return "";
+        return values.Distinct().ToArray();
     }
 
     private async Task<IReadOnlyList<(string Source, string Value)>> ReadDeviceTokensAsync()
@@ -168,12 +182,23 @@ public sealed class LegacyWeChatKeyCandidateService
 
     public async Task<LegacyKeyDiagnostics> DiagnoseAsync()
     {
-        var uin = await ReadUinAsync();
+        var uins = await ReadUinsAsync();
         var tokens = await ReadDeviceTokensAsync();
         var count = 0;
-        if (!string.IsNullOrWhiteSpace(uin))
-            count = tokens.Select(x => BuildLegacyKey(x.Value, uin)).Where(x => x.Length > 0).Distinct().Count();
-        return new LegacyKeyDiagnostics(!string.IsNullOrWhiteSpace(uin), tokens.Select(x => x.Source).Distinct().ToArray(), count);
+        if (uins.Count > 0)
+        {
+            count = uins
+                .SelectMany(ExpandUinVariants)
+                .SelectMany(uin => tokens.Select(x => BuildLegacyKey(x.Value, uin))
+                    .Append(BuildLegacyKey("", uin)))
+                .Where(x => x.Length > 0)
+                .Distinct()
+                .Count();
+        }
+        return new LegacyKeyDiagnostics(
+            uins.Count > 0,
+            tokens.Select(x => x.Source).Distinct().ToArray(),
+            count);
     }
 }
 
