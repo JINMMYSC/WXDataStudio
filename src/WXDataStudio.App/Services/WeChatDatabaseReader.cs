@@ -201,7 +201,7 @@ public sealed class WeChatDatabaseReader
             Remark = Text(r, 1),
             NickName = Text(r, 2),
             LastContent = Text(r, 3),
-            LastTime = Int64(r, 4)
+            LastTime = NormalizeUnixTime(Int64(r, 4))
         });
     }
 
