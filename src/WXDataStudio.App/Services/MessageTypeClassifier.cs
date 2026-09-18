@@ -29,7 +29,7 @@ public static class MessageTypeClassifier
         {
             5 => MessageKind.Link,
             6 => MessageKind.File,
-            19 => MessageKind.Quote,
+            19 or 57 => MessageKind.Quote,
             33 or 36 => MessageKind.MiniProgram,
             2000 => MessageKind.Transfer,
             2001 => MessageKind.RedPacket,
@@ -49,7 +49,7 @@ public static class MessageTypeClassifier
         if (ContainsAny(content, "<appattach>", "<totallen>", "<fileext>")) return MessageKind.File;
         if (ContainsAny(content, "<weappinfo>", "<appservicetype>")) return MessageKind.MiniProgram;
         if (ContainsAny(content, "<refermsg>", "<refermsgid>")) return MessageKind.Quote;
-        if (type == 42 || ContainsAny(content, "<username>", "<nickname>")) return MessageKind.ContactCard;
+        if (type == type == 42 || ContainsAny(content, "<username>", "<nickname>")) return MessageKind.ContactCard;
         return MessageKind.Unknown;
     }
 
