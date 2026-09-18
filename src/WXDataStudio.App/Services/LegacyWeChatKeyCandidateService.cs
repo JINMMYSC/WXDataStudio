@@ -1,5 +1,7 @@
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace WXDataStudio.App.Services;
@@ -15,12 +17,12 @@ public sealed class LegacyWeChatKeyCandidateService
         _adb = adb;
     }
 
-    public async Task<IReadOnlyList<DatabaseKeyCandidate>> BuildAsync()
+    public async Task<IReadOnlyList<DatabaseKeyCandidate>> BuildAsync(string? snapshotDirectory = null)
     {
-        var uins = await ReadUinsAsync();
+        var uins = await ReadUinsAsync(snapshotDirectory);
         if (uins.Count == 0) return Array.Empty<DatabaseKeyCandidate>();
 
-        var tokens = await ReadDeviceTokensAsync();
+        var tokens = await ReadDeviceTokensAsync(snapshotDirectory);
         var candidates = new List<DatabaseKeyCandidate>();
         foreach (var uin in uins)
         foreach (var uinVariant in ExpandUinVariants(uin))
@@ -52,7 +54,6 @@ public sealed class LegacyWeChatKeyCandidateService
         return md5[..7];
     }
 
-
     internal static IReadOnlyList<string> ExpandUinVariants(string uin)
     {
         var list = new List<string> { uin.Trim() };
@@ -60,8 +61,29 @@ public sealed class LegacyWeChatKeyCandidateService
             list.Add(unchecked((uint)signed).ToString());
         return list.Distinct().ToArray();
     }
-    private async Task<IReadOnlyList<string>> ReadUinsAsync()
+
+    private async Task<IReadOnlyList<string>> ReadUinsAsync(string? snapshotDirectory)
     {
+        var values = new List<string>();
+        if (!string.IsNullOrWhiteSpace(snapshotDirectory))
+        {
+            var support = Path.Combine(snapshotDirectory, "support");
+            foreach (var name in new[]
+                     {
+                         "auth_info_key_prefs.xml",
+                         "system_config_prefs.xml",
+                         "com.tencent.mm_preferences.xml"
+                     })
+            {
+                var path = Path.Combine(support, name);
+                if (!File.Exists(path)) continue;
+                try { values.AddRange(ParseUins(await File.ReadAllTextAsync(path))); }
+                catch { }
+            }
+        }
+
+        if (values.Count > 0) return values.Distinct().Take(16).ToArray();
+
         var paths = new[]
         {
             "/data/user/0/com.tencent.mm/shared_prefs/auth_info_key_prefs.xml",
@@ -71,12 +93,15 @@ public sealed class LegacyWeChatKeyCandidateService
             "/data/data/com.tencent.mm/shared_prefs/system_config_prefs.xml",
             "/data/data/com.tencent.mm/shared_prefs/com.tencent.mm_preferences.xml"
         };
-        var values = new List<string>();
         foreach (var path in paths)
         {
-            var result = await _adb.RootShellAsync($"cat '{path}' 2>/dev/null");
-            if (!result.Success && string.IsNullOrWhiteSpace(result.StdOut)) continue;
-            values.AddRange(ParseUins(result.StdOut));
+            try
+            {
+                var result = await _adb.RootShellAsync($"cat '{path}' 2>/dev/null");
+                if (!result.Success && string.IsNullOrWhiteSpace(result.StdOut)) continue;
+                values.AddRange(ParseUins(result.StdOut));
+            }
+            catch { }
         }
         return values.Distinct().Take(16).ToArray();
     }
@@ -106,8 +131,45 @@ public sealed class LegacyWeChatKeyCandidateService
         return values.Distinct().ToArray();
     }
 
-    private async Task<IReadOnlyList<(string Source, string Value)>> ReadDeviceTokensAsync()
+    private async Task<IReadOnlyList<(string Source, string Value)>> ReadDeviceTokensAsync(
+        string? snapshotDirectory)
     {
+        var list = new List<(string Source, string Value)>();
+        if (!string.IsNullOrWhiteSpace(snapshotDirectory))
+        {
+            var support = Path.Combine(snapshotDirectory, "support");
+            var tokenPath = Path.Combine(support, "device_tokens.json");
+            if (File.Exists(tokenPath))
+            {
+                try
+                {
+                    var json = await File.ReadAllTextAsync(tokenPath);
+                    var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                    if (tokens is not null)
+                    {
+                        foreach (var item in tokens)
+                            AddRawTokens(list, "snapshot:" + item.Key, item.Value);
+                    }
+                }
+                catch { }
+            }
+
+            var compatible = Path.Combine(support, "CompatibleInfo.cfg");
+            if (File.Exists(compatible))
+            {
+                try
+                {
+                    var printable = ExtractPrintableAscii(await File.ReadAllBytesAsync(compatible));
+                    foreach (var value in ExtractCompatibleInfoCandidates(printable))
+                        list.Add(("snapshot:CompatibleInfo.cfg", value));
+                }
+                catch { }
+            }
+        }
+
+        if (list.Count > 0)
+            return NormalizeTokens(list);
+
         var probes = new[]
         {
             ("persist.radio.imei", "getprop persist.radio.imei"),
@@ -116,30 +178,43 @@ public sealed class LegacyWeChatKeyCandidateService
             ("android_id", "settings get secure android_id"),
             ("ro.serialno", "getprop ro.serialno")
         };
-        var list = new List<(string Source, string Value)>();
         foreach (var probe in probes)
         {
-            var result = await _adb.ShellAsync(probe.Item2);
-            var raw = result.StdOut.Trim();
-            if (string.IsNullOrWhiteSpace(raw) || raw.Equals("null", StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var token in raw.Split(new[] { ',', '\r', '\n', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            try
             {
-                var cleaned = new string(token.Where(char.IsLetterOrDigit).ToArray());
-                if (cleaned.Length >= 6) list.Add((probe.Item1, cleaned));
+                var result = await _adb.ShellAsync(probe.Item2);
+                AddRawTokens(list, probe.Item1, result.StdOut);
             }
+            catch { }
         }
 
-        foreach (var item in await ReadCompatibleInfoTokensAsync())
+        foreach (var item in await ReadCompatibleInfoTokensFromDeviceAsync())
             list.Add(item);
 
-        return list
-            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+        return NormalizeTokens(list);
+    }
+
+    private static void AddRawTokens(
+        List<(string Source, string Value)> list, string source, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) ||
+            raw.Trim().Equals("null", StringComparison.OrdinalIgnoreCase)) return;
+        foreach (var token in raw.Split(new[] { ',', '\r', '\n', ' ' },
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            var cleaned = new string(token.Where(char.IsLetterOrDigit).ToArray());
+            if (cleaned.Length >= 6) list.Add((source, cleaned));
+        }
+    }
+
+    private static IReadOnlyList<(string Source, string Value)> NormalizeTokens(
+        IEnumerable<(string Source, string Value)> source) =>
+        source.Where(x => !string.IsNullOrWhiteSpace(x.Value))
             .DistinctBy(x => x.Value, StringComparer.OrdinalIgnoreCase)
             .Take(64)
             .ToArray();
-    }
 
-    private async Task<IReadOnlyList<(string Source, string Value)>> ReadCompatibleInfoTokensAsync()
+    private async Task<IReadOnlyList<(string Source, string Value)>> ReadCompatibleInfoTokensFromDeviceAsync()
     {
         var paths = new[]
         {
@@ -148,18 +223,35 @@ public sealed class LegacyWeChatKeyCandidateService
         };
         foreach (var path in paths)
         {
-            var command =
-                $"if [ -f '{path}' ]; then " +
-                $"if command -v busybox >/dev/null 2>&1; then busybox strings '{path}'; " +
-                $"elif command -v strings >/dev/null 2>&1; then strings '{path}'; " +
-                $"else cat '{path}' | tr -cd '\\11\\12\\15\\40-\\176'; fi; fi";
-            var result = await _adb.RootShellAsync(command);
-            if (string.IsNullOrWhiteSpace(result.StdOut)) continue;
-            var values = ExtractCompatibleInfoCandidates(result.StdOut);
-            if (values.Count > 0)
-                return values.Select(x => ("CompatibleInfo.cfg", x)).ToArray();
+            try
+            {
+                var command =
+                    $"if [ -f '{path}' ]; then " +
+                    $"if command -v busybox >/dev/null 2>&1; then busybox strings '{path}'; " +
+                    $"elif command -v strings >/dev/null 2>&1; then strings '{path}'; " +
+                    $"else cat '{path}' | tr -cd '\\11\\12\\15\\40-\\176'; fi; fi";
+                var result = await _adb.RootShellAsync(command);
+                if (string.IsNullOrWhiteSpace(result.StdOut)) continue;
+                var values = ExtractCompatibleInfoCandidates(result.StdOut);
+                if (values.Count > 0)
+                    return values.Select(x => ("CompatibleInfo.cfg", x)).ToArray();
+            }
+            catch { }
         }
         return Array.Empty<(string Source, string Value)>();
+    }
+
+    private static string ExtractPrintableAscii(byte[] bytes)
+    {
+        var sb = new StringBuilder(bytes.Length);
+        foreach (var value in bytes)
+        {
+            if (value is >= 32 and <= 126 || value is 9 or 10 or 13)
+                sb.Append((char)value);
+            else
+                sb.Append('\n');
+        }
+        return sb.ToString();
     }
 
     public static IReadOnlyList<string> ExtractCompatibleInfoCandidates(string text)
@@ -170,7 +262,8 @@ public sealed class LegacyWeChatKeyCandidateService
         foreach (Match match in Regex.Matches(text, @"(?<!\d)\d{14,18}(?!\d)"))
             values.Add(match.Value);
 
-        foreach (Match match in Regex.Matches(text, @"(?<![A-Za-z0-9])[A-Fa-f0-9]{14,20}(?![A-Za-z0-9])"))
+        foreach (Match match in Regex.Matches(text,
+                     @"(?<![A-Za-z0-9])[A-Fa-f0-9]{14,20}(?![A-Za-z0-9])"))
             values.Add(match.Value);
 
         return values
@@ -180,10 +273,10 @@ public sealed class LegacyWeChatKeyCandidateService
             .ToArray();
     }
 
-    public async Task<LegacyKeyDiagnostics> DiagnoseAsync()
+    public async Task<LegacyKeyDiagnostics> DiagnoseAsync(string? snapshotDirectory = null)
     {
-        var uins = await ReadUinsAsync();
-        var tokens = await ReadDeviceTokensAsync();
+        var uins = await ReadUinsAsync(snapshotDirectory);
+        var tokens = await ReadDeviceTokensAsync(snapshotDirectory);
         var count = 0;
         if (uins.Count > 0)
         {
