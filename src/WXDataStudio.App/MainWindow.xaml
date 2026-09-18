@@ -14,6 +14,8 @@
                     <Button Content="设备" Padding="14,7" Margin="0,0,8,0" Click="OnRefreshDevice"/>
                     <Button Content="快照" Padding="14,7" Margin="0,0,8,0" Click="OnCreateSnapshot"/>
                     <Button Content="解析快照" Padding="14,7" Margin="0,0,8,0" Click="OnAnalyzeSnapshot"/>
+                    <Button Content="选择快照" Padding="14,7" Margin="0,0,8,0" Click="OnSelectSnapshot"/>
+                    <Button Content="数据库诊断" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseDiagnostics"/>
                     <Button Content="数据库密钥" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseKey"/>
                     <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace"/>
                     <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff"/>
@@ -21,8 +23,11 @@
                     <Button Content="迁移检查" Padding="14,7" Click="OnMigrationCheck"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse Width="9" Height="9" Fill="#2DA44E" Margin="0,0,7,0"/>
-                    <TextBlock x:Name="DeviceBadge" Text="MIX 2S / WeChat 8.0.76 基线"/>
+                    <Ellipse x:Name="DeviceIndicator" Width="9" Height="9" Fill="#8C959F" Margin="0,0,7,0"/>
+                    <StackPanel>
+                        <TextBlock x:Name="DeviceBadge" Text="离线模式 / 正在检查"/>
+                        <TextBlock x:Name="SnapshotBadge" Text="正在检查本地快照..." FontSize="11" Foreground="#6A737D"/>
+                    </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#DADDE2" BorderThickness="0,1,0,0" Height="145" Padding="12">
