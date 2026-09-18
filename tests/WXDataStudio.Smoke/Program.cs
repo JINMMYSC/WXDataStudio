@@ -140,14 +140,26 @@ var legacyTables = await reader.ListTablesAsync(legacyDbPath,
     new DatabaseOpenOptions { Password = "smoke-secret", UseLegacyWeChatCipher = true });
 Assert(legacyTables.Contains("smoke"), "legacy SQLCipher profile open failed");
 
+var sc1EncryptedPath = Path.Combine(root, "sc1-encrypted.db");
+await using (var connection = new SqliteConnection($"Data Source={sc1EncryptedPath}"))
+{
+    await connection.OpenAsync();
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "PRAGMA cipher_compatibility=1;PRAGMA key='sc1-secret';CREATE TABLE sc1test(id INTEGER PRIMARY KEY, value TEXT);INSERT INTO sc1test(value) VALUES('ok');";
+    await cmd.ExecuteNonQueryAsync();
+}
+var sc1CompatTables = await reader.ListTablesAsync(sc1EncryptedPath,
+    new DatabaseOpenOptions { Password = "sc1-secret", CipherCompatibility = 1 });
+Assert(sc1CompatTables.Contains("sc1test"), "SQLCipher compatibility 1 smoke database did not open");
+
 var sc1 = new LegacySc1PageDecryptService();
-Assert(sc1.MatchesPassword(legacyDbPath, "smoke-secret"), "SC1 password first-page match failed");
-Assert(!sc1.MatchesPassword(legacyDbPath, "wrong-secret"), "SC1 wrong password unexpectedly matched");
-var sc1PlainPath = Path.Combine(root, "legacy-sc1-plain.db");
-await sc1.DecryptWithPasswordAsync(legacyDbPath, "smoke-secret", sc1PlainPath);
+Assert(sc1.MatchesPassword(sc1EncryptedPath, "sc1-secret"), "SC1 password first-page match failed");
+Assert(!sc1.MatchesPassword(sc1EncryptedPath, "wrong-secret"), "SC1 wrong password unexpectedly matched");
+var sc1PlainPath = Path.Combine(root, "sc1-plain.db");
+await sc1.DecryptWithPasswordAsync(sc1EncryptedPath, "sc1-secret", sc1PlainPath);
 var sc1PlainTables = await reader.ListTablesAsync(
     sc1PlainPath, new DatabaseOpenOptions { ReadOnly = true });
-Assert(sc1PlainTables.Contains("smoke"), "SC1 page decrypt output did not open as plain SQLite");
+Assert(sc1PlainTables.Contains("sc1test"), "SC1 page decrypt output did not open as plain SQLite");
 
 var rawDbPath = Path.Combine(root, "raw-encrypted.db");
 const string rawHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
