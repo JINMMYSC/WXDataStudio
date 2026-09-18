@@ -50,9 +50,9 @@ public sealed class LegacySc1PageDecryptService
         return DecryptAsync(databasePath, key, outputPath);
     }
 
-    private static async Task<string> DecryptAsync(string databasePath, byte[] key, string outputPath)
+    private static Task<string> DecryptAsync(string databasePath, byte[] key, string outputPath)
     {
-        var input = await File.ReadAllBytesAsync(databasePath);
+        var input = File.ReadAllBytes(databasePath);
         if (input.Length < PageSize || input.Length % PageSize != 0)
             throw new InvalidDataException("Encrypted database size is not aligned to the expected 1024-byte page size.");
 
@@ -63,25 +63,26 @@ public sealed class LegacySc1PageDecryptService
         for (var index = 0; index < pageCount; index++)
         {
             var offset = index * PageSize;
-            var page = input.AsSpan(offset, PageSize);
+            var page = new byte[PageSize];
+            Buffer.BlockCopy(input, offset, page, 0, PageSize);
             var plain = DecryptPage(page, key, index == 0)
                 ?? throw new InvalidDataException($"Unable to decrypt database page {index + 1}.");
 
             if (index == 0)
             {
-                header.CopyTo(output.AsSpan(offset, header.Length));
-                plain.CopyTo(output.AsSpan(offset + 16, plain.Length));
+                Buffer.BlockCopy(header, 0, output, offset, header.Length);
+                Buffer.BlockCopy(plain, 0, output, offset + 16, plain.Length);
             }
             else
             {
-                plain.CopyTo(output.AsSpan(offset, plain.Length));
+                Buffer.BlockCopy(plain, 0, output, offset, plain.Length);
             }
         }
 
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        await File.WriteAllBytesAsync(outputPath, output);
-        return outputPath;
+        File.WriteAllBytes(outputPath, output);
+        return Task.FromResult(outputPath);
     }
 
     private static byte[] ReadFirstPage(string databasePath)
