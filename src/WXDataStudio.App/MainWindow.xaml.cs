@@ -37,7 +37,6 @@ public partial class MainWindow : Window
     private string? _currentDbPath;
     private string? _latestSnapshotDirectory;
     private DatabaseCredentialResolution? _credential;
-    private SnapshotCatalogItem? _currentSnapshot;
     private DatabaseOpenOptions? _currentDbOptions;
     private string? _manualDatabaseKey;
     private bool _manualDatabaseKeyIsRawHex;
@@ -89,7 +88,6 @@ public partial class MainWindow : Window
 
     private void SelectSnapshot(SnapshotCatalogItem item)
     {
-        _currentSnapshot = item;
         _latestSnapshotDirectory = item.DirectoryPath;
         _currentDbPath = null;
         _currentDbOptions = null;
@@ -98,6 +96,7 @@ public partial class MainWindow : Window
         _currentConversation = null;
         _currentConversations = Array.Empty<ConversationItem>();
         _currentMessages = Array.Empty<WeChatMessage>();
+        SetAddButtonsEnabled(false);
         SnapshotBadge.Text = $"快照：{item.DisplayName}";
     }
 
@@ -296,6 +295,7 @@ public partial class MainWindow : Window
             _workspace = null;
             _currentConversation = null;
             _currentMessages = Array.Empty<WeChatMessage>();
+            SetAddButtonsEnabled(false);
             AddLog($"Loaded {conversations.Count:N0} conversations from the snapshot.");
         }
         catch (Exception ex)
@@ -307,7 +307,7 @@ public partial class MainWindow : Window
 
     private void OnOpenWorkspace(object sender, RoutedEventArgs e)
     {
-        if (_currentConversation is not null && _currentMessages.Count > 0 &&
+        if (_currentConversation is not null &&
             !string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
         {
             _workspace = _workspaceService.Create(
@@ -793,7 +793,9 @@ public partial class MainWindow : Window
         PropertyAttachment.IsReadOnly = !allow;
         EditButton.IsEnabled = allow;
         UndoButton.IsEnabled = allow;
-        ReplaceMediaButton.IsEnabled = allow;
+        ReplaceMediaButton.IsEnabled = allow &&
+            MessageList.SelectedItem is WorkspaceMessage workspaceMessage &&
+            MessageKindPolicy.HasExternalMedia(workspaceMessage.Kind);
         PreviewMediaButton.IsEnabled = File.Exists(MediaOriginalPath.Text);
         ValidateTimelineButton.IsEnabled = _workspace is not null || _currentMessages.Count > 0;
     }
