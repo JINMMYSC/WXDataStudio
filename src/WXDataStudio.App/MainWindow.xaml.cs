@@ -593,9 +593,13 @@ public partial class MainWindow : Window
     private void OnUndoWorkspaceMessage(object sender, RoutedEventArgs e)
     {
         if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg) return;
+        var wasNew = msg.IsNew;
         _workspaceService.Revert(_workspace, msg.LocalId);
         MessageList.Items.Refresh();
-        FillEditor(msg);
+        if (wasNew)
+            MessageList.SelectedItem = null;
+        else
+            FillEditor(msg);
         AddLog($"Workspace message reverted: {msg.LocalId}");
     }
 
