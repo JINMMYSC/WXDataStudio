@@ -19,12 +19,15 @@ public partial class MainWindow : Window
     private readonly WeChatDatabaseReader _dbReader = new();
     private readonly WorkspaceService _workspaceService = new();
     private readonly WorkspaceDiffService _diffService = new();
+    private readonly MigrationReadinessService _migrationReadiness = new();
+    private readonly MigrationReportExporter _migrationExporter = new();
     private readonly MediaLocatorService _mediaLocator;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
     private DeviceInfo? _device;
     private WorkspaceDocument? _workspace;
     private ConversationItem? _currentConversation;
+    private IReadOnlyList<ConversationItem> _currentConversations = Array.Empty<ConversationItem>();
     private IReadOnlyList<WeChatMessage> _currentMessages = Array.Empty<WeChatMessage>();
     private string? _currentDbPath;
     private string? _latestSnapshotDirectory;
@@ -183,6 +186,7 @@ public partial class MainWindow : Window
             }
             _currentDbOptions = options;
             var conversations = await _dbReader.LoadConversationsAsync(db, options);
+            _currentConversations = conversations;
             ConversationList.ItemsSource = conversations;
             _workspace = null;
             _currentConversation = null;
@@ -243,6 +247,57 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AddLog($"Integrity check failed: {ex.Message}");
+        }
+    }
+
+    private void OnSearchChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_currentConversations.Count == 0) return;
+        var q = SearchBox.Text.Trim();
+        ConversationList.ItemsSource = string.IsNullOrWhiteSpace(q)
+            ? _currentConversations
+            : _currentConversations.Where(x =>
+                x.EffectiveName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Username.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Remark.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.LastContent.Contains(q, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
+
+    private async void OnMigrationCheck(object sender, RoutedEventArgs e)
+    {
+        _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
+        if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
+        {
+            MessageBox.Show("还没有可检查的快照。", "迁移检查",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var integrity = await _integrity.CheckAsync(_latestSnapshotDirectory);
+            var report = _migrationReadiness.Evaluate(
+                _latestSnapshotDirectory, _currentConversations, _currentMessages, integrity);
+            var output = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "WXDataStudio", "reports");
+            var files = await _migrationExporter.ExportAsync(report, output);
+            var summary =
+                $"状态：{report.Status}\n" +
+                $"会话：{report.ConversationCount}\n" +
+                $"当前已加载消息：{report.MessageCount}\n" +
+                $"未知类型：{report.UnknownMessageCount}\n" +
+                $"交易/红包/收付款只读：{report.SensitiveMessageCount}\n" +
+                $"警告：{report.WarningCount}\n\n" +
+                $"报告：\n{files.TextPath}\n{files.JsonPath}";
+            AddLog($"Migration readiness: {report.Status}; warnings={report.WarningCount}; blocked={report.IsBlocked}.");
+            MessageBox.Show(summary, "迁移检查（当前已加载数据）",
+                MessageBoxButton.OK, report.IsBlocked ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Migration readiness failed: {ex.Message}");
+            MessageBox.Show(ex.Message, "迁移检查失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -437,6 +492,12 @@ public partial class MainWindow : Window
         LocationAddress.Text = meta.Address;
         LocationLatLng.Text = string.IsNullOrWhiteSpace(meta.Latitude) && string.IsNullOrWhiteSpace(meta.Longitude)
             ? "" : $"{meta.Latitude}, {meta.Longitude}";
+        QuoteSenderBox.Text = meta.QuoteSender;
+        QuoteContentBox.Text = meta.QuoteContent;
+        MiniProgramUserNameBox.Text = meta.MiniProgramUserName;
+        MiniProgramPathBox.Text = meta.MiniProgramPath;
+        ContactUserNameBox.Text = meta.ContactUserName;
+        ContactNickNameBox.Text = meta.ContactNickName;
         TransactionType.Text = meta.TransactionType;
         TransactionAmount.Text = meta.TransactionAmount;
         TransactionStatus.Text = meta.TransactionStatus;
