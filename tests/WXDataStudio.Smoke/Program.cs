@@ -161,6 +161,21 @@ var sc1PlainTables = await reader.ListTablesAsync(
     sc1PlainPath, new DatabaseOpenOptions { ReadOnly = true });
 Assert(sc1PlainTables.Contains("sc1test"), "SC1 page decrypt output did not open as plain SQLite");
 
+var sc1EncryptedBytes = await File.ReadAllBytesAsync(sc1EncryptedPath);
+var sc1RawKey = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(
+    System.Text.Encoding.UTF8.GetBytes("sc1-secret"),
+    sc1EncryptedBytes.AsSpan(0, 16),
+    4000,
+    System.Security.Cryptography.HashAlgorithmName.SHA1,
+    32);
+var sc1RawHex = Convert.ToHexString(sc1RawKey).ToLowerInvariant();
+Assert(sc1.MatchesRawKey(sc1EncryptedPath, sc1RawHex), "SC1 raw AES key match failed");
+var sc1RawPlainPath = Path.Combine(root, "sc1-raw-plain.db");
+await sc1.DecryptWithRawKeyAsync(sc1EncryptedPath, sc1RawHex, sc1RawPlainPath);
+var sc1RawTables = await reader.ListTablesAsync(
+    sc1RawPlainPath, new DatabaseOpenOptions { ReadOnly = true });
+Assert(sc1RawTables.Contains("sc1test"), "SC1 raw AES key decrypt output did not open");
+
 var rawDbPath = Path.Combine(root, "raw-encrypted.db");
 const string rawHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 await using (var connection = new SqliteConnection($"Data Source={rawDbPath}"))
