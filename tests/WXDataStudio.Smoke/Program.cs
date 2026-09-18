@@ -141,11 +141,18 @@ var legacyTables = await reader.ListTablesAsync(legacyDbPath,
 Assert(legacyTables.Contains("smoke"), "legacy SQLCipher profile open failed");
 
 var sc1EncryptedPath = Path.Combine(root, "sc1-encrypted.db");
+await using (var bootstrap = new SqliteConnection("Data Source=:memory:;Pooling=False"))
+{
+    await bootstrap.OpenAsync();
+    await using var defaultCompat = bootstrap.CreateCommand();
+    defaultCompat.CommandText = "PRAGMA cipher_default_compatibility=1;";
+    await defaultCompat.ExecuteNonQueryAsync();
+}
 await using (var connection = new SqliteConnection($"Data Source={sc1EncryptedPath};Pooling=False"))
 {
     await connection.OpenAsync();
     await using var cmd = connection.CreateCommand();
-    cmd.CommandText = "PRAGMA cipher_compatibility=1;PRAGMA key='sc1-secret';CREATE TABLE sc1test(id INTEGER PRIMARY KEY, value TEXT);INSERT INTO sc1test(value) VALUES('ok');";
+    cmd.CommandText = "PRAGMA key='sc1-secret';CREATE TABLE sc1test(id INTEGER PRIMARY KEY, value TEXT);INSERT INTO sc1test(value) VALUES('ok');";
     await cmd.ExecuteNonQueryAsync();
 }
 var sc1CompatTables = await reader.ListTablesAsync(sc1EncryptedPath,
