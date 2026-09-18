@@ -70,6 +70,32 @@ Assert(!MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer must stay 
 Assert(!MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet must stay read-only");
 Assert(MessageKindPolicy.IsEditable(MessageKind.Text), "text should be editable in workspace");
 
+const string transferXml = "<msg><appmsg><type>2000</type><wcpayinfo><feedesc>¥1.00</feedesc><paysubtype>1</paysubtype></wcpayinfo></appmsg></msg>";
+const string redPacketXml = "<msg><appmsg><type>2001</type><wcpayinfo><sendid>demo</sendid><feedesc>红包</feedesc></wcpayinfo></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(49, transferXml) == MessageKind.Transfer, "transfer classification mismatch");
+Assert(MessageTypeClassifier.Classify(49, redPacketXml) == MessageKind.RedPacket, "red packet classification mismatch");
+
+var sensitiveSource = new WeChatMessage
+{
+    LocalId = 99,
+    ConversationId = "alice",
+    RawType = 49,
+    CreateTime = messages[0].CreateTime + 5,
+    Content = transferXml,
+    Kind = MessageKind.Transfer
+};
+var sensitiveWorkspace = new WorkspaceService().Create(root, conversations[0], new[] { sensitiveSource });
+var sensitiveEditBlocked = false;
+try
+{
+    new WorkspaceService().EditContent(sensitiveWorkspace, 99, "changed");
+}
+catch (InvalidOperationException)
+{
+    sensitiveEditBlocked = true;
+}
+Assert(sensitiveEditBlocked, "existing sensitive record editing must be blocked");
+
 var readinessDir = Path.Combine(root, "readiness");
 Directory.CreateDirectory(readinessDir);
 await File.WriteAllBytesAsync(Path.Combine(readinessDir, "EnMicroMsg.db"), new byte[] { 1 });
@@ -78,6 +104,19 @@ await File.WriteAllBytesAsync(Path.Combine(readinessDir, "EnMicroMsg.db-shm"), n
 var readiness = new MigrationReadinessService().Evaluate(readinessDir, conversations, messages, Array.Empty<string>());
 Assert(!readiness.IsBlocked, "readiness unexpectedly blocked");
 Assert(readiness.Status == "Ready", "readiness status mismatch");
+var unknownMessage = new WeChatMessage
+{
+    LocalId = 77,
+    ConversationId = "alice",
+    RawType = 999999,
+    CreateTime = messages[^1].CreateTime + 1,
+    Content = "unknown",
+    Kind = MessageKind.Unknown
+};
+var reviewReadiness = new MigrationReadinessService().Evaluate(
+    readinessDir, conversations, messages.Concat(new[] { unknownMessage }).ToArray(), Array.Empty<string>());
+Assert(reviewReadiness.Status == "Review", "unknown message should require review");
+Assert(reviewReadiness.UnknownMessageCount == 1, "unknown message count mismatch");
 var reportFiles = await new MigrationReportExporter().ExportAsync(readiness, Path.Combine(root, "reports"));
 Assert(File.Exists(reportFiles.JsonPath), "readiness JSON report missing");
 Assert(File.Exists(reportFiles.TextPath), "readiness text report missing");
@@ -177,6 +216,11 @@ var rollback = await new RollbackPackageService().CreateAsync(
     rollbackDir, Path.Combine(root, "rollback-output"));
 Assert(File.Exists(rollback.PackagePath), "rollback package missing");
 Assert(rollback.Size > 0 && rollback.Sha256.Length == 64, "rollback package metadata mismatch");
+using (var archive = System.IO.Compression.ZipFile.OpenRead(rollback.PackagePath))
+{
+    Assert(archive.GetEntry("manifest.json") is not null, "rollback package manifest missing");
+    Assert(archive.GetEntry("EnMicroMsg.db") is not null, "rollback package database missing");
+}
 
 var workspacePath = await workspaceService.SaveAsync(workspace, root);
 var loaded = await workspaceService.LoadAsync(workspacePath);
