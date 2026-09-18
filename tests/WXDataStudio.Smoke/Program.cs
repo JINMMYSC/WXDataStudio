@@ -159,6 +159,21 @@ Assert(File.Exists(importedMedia), "workspace media import failed");
 var addedImage = workspaceService.AddMessage(workspace, MessageKind.Image, "[image]", importedMedia);
 Assert(addedImage.Attachment == importedMedia, "workspace image attachment mismatch");
 
+var textAttachmentBlocked = false;
+try
+{
+    workspaceService.EditAttachment(workspace, addedText.LocalId, importedMedia);
+}
+catch (InvalidOperationException)
+{
+    textAttachmentBlocked = true;
+}
+Assert(textAttachmentBlocked, "text message media replacement must be blocked");
+
+var addedTextId = addedText.LocalId;
+workspaceService.Revert(workspace, addedTextId);
+Assert(workspace.Messages.All(x => x.LocalId != addedTextId), "new workspace message revert must remove the message");
+
 var sensitiveCreateBlocked = false;
 try
 {
@@ -172,7 +187,7 @@ Assert(sensitiveCreateBlocked, "sensitive workspace message creation must be blo
 
 workspaceService.EditContent(workspace, 1, "edited hello");
 workspaceService.EditTime(workspace, 1, messages[0].CreateTime + 60);
-Assert(workspace.Audit.Count == 4, "workspace audit mismatch");
+Assert(workspace.Audit.Count == 5, "workspace audit mismatch");
 
 var diffService = new WorkspaceDiffService();
 var diffs = diffService.GetDiffs(workspace);
