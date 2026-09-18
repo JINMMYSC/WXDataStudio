@@ -45,6 +45,36 @@ Assert(messages.Count == 3, "message count mismatch");
 Assert(messages[0].Kind == MessageKind.Text, "text classification mismatch");
 Assert(messages[1].Kind == MessageKind.Image, "image classification mismatch");
 Assert(messages[2].Kind == MessageKind.Link, "link classification mismatch");
+Assert(conversations[0].LastTime == 1726500000, "conversation timestamp normalization mismatch");
+Assert(!string.IsNullOrWhiteSpace(conversations[0].LastDisplayTime), "conversation display time missing");
+
+var altDbPath = Path.Combine(root, "alternate-schema.db");
+await using (var connection = new SqliteConnection($"Data Source={altDbPath}"))
+{
+    await connection.OpenAsync();
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = """
+        CREATE TABLE ContactBook(userName TEXT PRIMARY KEY, nickName TEXT, remark TEXT);
+        CREATE TABLE ChatRows(localId INTEGER PRIMARY KEY, serverId INTEGER, conversationId TEXT,
+            isOutgoing INTEGER, msgType INTEGER, msgStatus INTEGER, time INTEGER, sequence INTEGER,
+            body TEXT, imagePath TEXT, extra TEXT);
+        INSERT INTO ContactBook VALUES ('bob','Bob Nick','Bob Remark');
+        INSERT INTO ChatRows VALUES (11,201,'bob',0,1,3,1726600000000,1,'alt hello',NULL,NULL);
+        """;
+    await cmd.ExecuteNonQueryAsync();
+}
+var altSchema = await reader.DetectSchemaAsync(altDbPath);
+Assert(altSchema.MessageTable == "ChatRows", "alternate message table detection failed");
+Assert(altSchema.ConversationTable is null, "alternate schema should use message fallback");
+Assert(altSchema.ContactTable == "ContactBook", "alternate contact table detection failed");
+Assert(altSchema.UsesConversationFallback, "alternate conversation fallback flag mismatch");
+var altConversations = await reader.LoadConversationsAsync(altDbPath);
+Assert(altConversations.Count == 1, "alternate conversation fallback count mismatch");
+Assert(altConversations[0].EffectiveName == "Bob Remark", "alternate contact join mismatch");
+Assert(altConversations[0].LastTime == 1726600000, "alternate conversation time normalization mismatch");
+var altMessages = await reader.LoadMessagesAsync(altDbPath, "bob");
+Assert(altMessages.Count == 1 && altMessages[0].Content == "alt hello",
+    "alternate message schema mapping mismatch");
 
 var meta = MessageMetadataParser.Parse(messages[2].Kind, messages[2].Content);
 Assert(meta.Title == "OpenAI", "card title parse mismatch");
