@@ -76,6 +76,11 @@ var compatibleCandidates = LegacyWeChatKeyCandidateService.ExtractCompatibleInfo
     "noise\n867530912345678\nother 0123456789abcdef end");
 Assert(compatibleCandidates.Contains("867530912345678"), "CompatibleInfo IMEI candidate parse failed");
 Assert(compatibleCandidates.Contains("0123456789abcdef"), "CompatibleInfo hex candidate parse failed");
+var uinCandidates = LegacyWeChatKeyCandidateService.ParseUins(
+    "<map><int name=\"default_uin\" value=\"123456\"/><string name=\"last_login_uin\">-987654</string><int name=\"_auth_uin\" value=\"123456\"/></map>");
+Assert(uinCandidates.Count == 2, "UIN candidate deduplication mismatch");
+Assert(uinCandidates.Contains("123456"), "default_uin parse failed");
+Assert(uinCandidates.Contains("-987654"), "last_login_uin parse failed");
 
 const string transferXml = "<msg><appmsg><type>2000</type><wcpayinfo><feedesc>¥1.00</feedesc><paysubtype>1</paysubtype></wcpayinfo></appmsg></msg>";
 const string redPacketXml = "<msg><appmsg><type>2001</type><wcpayinfo><sendid>demo</sendid><feedesc>红包</feedesc></wcpayinfo></appmsg></msg>";
