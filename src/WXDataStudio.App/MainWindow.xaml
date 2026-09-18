@@ -17,6 +17,7 @@
                     <Button Content="选择快照" Padding="14,7" Margin="0,0,8,0" Click="OnSelectSnapshot"/>
                     <Button Content="数据库诊断" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseDiagnostics"/>
                     <Button Content="数据库密钥" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseKey"/>
+                    <Button Content="密钥诊断" Padding="14,7" Margin="0,0,8,0" Click="OnKeyDiagnostics"/>
                     <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace"/>
                     <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff"/>
                     <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck"/>
