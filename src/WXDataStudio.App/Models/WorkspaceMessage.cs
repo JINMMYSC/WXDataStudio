@@ -23,12 +23,17 @@ public sealed class WorkspaceMessage
     public bool IsDirty => IsNew || Content != OriginalContent || CreateTime != OriginalCreateTime ||
                            !string.Equals(Attachment, OriginalAttachment, StringComparison.Ordinal);
     public bool CanEdit => MessageKindPolicy.IsEditable(Kind);
-    public string DisplayTime => DateTimeOffset.FromUnixTimeSeconds(CreateTime)
-        .LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+    public string DisplayTime => SafeFormatTime(CreateTime);
     public string Direction => IsOutgoing ? "我发送" : "对方发送";
     public override string ToString() =>
         $"{(IsNew ? "[新增] " : "")}[{DisplayTime}] {Direction} · {Kind} · {Preview(Content)}";
     private static string Preview(string s) => s.Length <= 70 ? s : s[..70] + "…";
+    private static string SafeFormatTime(long unix)
+    {
+        if (unix <= 0) return "";
+        try { return DateTimeOffset.FromUnixTimeSeconds(unix).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"); }
+        catch (ArgumentOutOfRangeException) { return ""; }
+    }
 
     public static WorkspaceMessage From(WeChatMessage source) => new()
     {
