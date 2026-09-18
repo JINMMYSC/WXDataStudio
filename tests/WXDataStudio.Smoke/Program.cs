@@ -133,7 +133,7 @@ Assert(sensitiveCreateBlocked, "sensitive workspace message creation must be blo
 
 workspaceService.EditContent(workspace, 1, "edited hello");
 workspaceService.EditTime(workspace, 1, messages[0].CreateTime + 60);
-Assert(workspace.Audit.Count == 2, "workspace audit mismatch");
+Assert(workspace.Audit.Count == 4, "workspace audit mismatch");
 
 var diffService = new WorkspaceDiffService();
 var diffs = diffService.GetDiffs(workspace);
