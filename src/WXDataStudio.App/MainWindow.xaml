@@ -81,6 +81,9 @@
                             <Button Content="+ 引用" Padding="10,5" IsEnabled="False" x:Name="AddQuoteButton" Click="OnAddQuote"/>
                         </WrapPanel>
                     </Grid>
+                    <TextBox DockPanel.Dock="Top" x:Name="MessageSearchBox" Height="30" Margin="0,0,0,8"
+                             ToolTip="搜索当前会话的正文、发送者、附件或消息 ID"
+                             TextChanged="OnMessageSearchChanged"/>
                     <ListBox x:Name="MessageList" SelectionChanged="OnMessageSelected"/>
                 </DockPanel>
             </Border>
