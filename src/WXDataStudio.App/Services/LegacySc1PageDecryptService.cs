@@ -52,36 +52,55 @@ public sealed class LegacySc1PageDecryptService
 
     private static Task<string> DecryptAsync(string databasePath, byte[] key, string outputPath)
     {
-        var input = File.ReadAllBytes(databasePath);
-        if (input.Length < PageSize || input.Length % PageSize != 0)
+        var length = new FileInfo(databasePath).Length;
+        if (length < PageSize || length % PageSize != 0)
             throw new InvalidDataException("Encrypted database size is not aligned to the expected 1024-byte page size.");
-
-        var output = new byte[input.Length];
-        var header = Encoding.ASCII.GetBytes("SQLite format 3\0");
-        var pageCount = input.Length / PageSize;
-
-        for (var index = 0; index < pageCount; index++)
-        {
-            var offset = index * PageSize;
-            var page = new byte[PageSize];
-            Buffer.BlockCopy(input, offset, page, 0, PageSize);
-            var plain = DecryptPage(page, key, index == 0)
-                ?? throw new InvalidDataException($"Unable to decrypt database page {index + 1}.");
-
-            if (index == 0)
-            {
-                Buffer.BlockCopy(header, 0, output, offset, header.Length);
-                Buffer.BlockCopy(plain, 0, output, offset + 16, plain.Length);
-            }
-            else
-            {
-                Buffer.BlockCopy(plain, 0, output, offset, plain.Length);
-            }
-        }
 
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        File.WriteAllBytes(outputPath, output);
+        var tempPath = outputPath + ".tmp";
+        if (File.Exists(tempPath)) File.Delete(tempPath);
+
+        var header = Encoding.ASCII.GetBytes("SQLite format 3\0");
+        var pageCount = length / PageSize;
+        try
+        {
+            using var input = new FileStream(
+                databasePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: PageSize * 16, FileOptions.SequentialScan);
+            using var output = new FileStream(
+                tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                bufferSize: PageSize * 16, FileOptions.SequentialScan);
+
+            var encryptedPage = new byte[PageSize];
+            for (long index = 0; index < pageCount; index++)
+            {
+                input.ReadExactly(encryptedPage);
+                var plain = DecryptPage(encryptedPage, key, index == 0)
+                    ?? throw new InvalidDataException($"Unable to decrypt database page {index + 1}.");
+                var outputPage = new byte[PageSize];
+
+                if (index == 0)
+                {
+                    Buffer.BlockCopy(header, 0, outputPage, 0, header.Length);
+                    Buffer.BlockCopy(plain, 0, outputPage, 16, plain.Length);
+                }
+                else
+                {
+                    Buffer.BlockCopy(plain, 0, outputPage, 0, plain.Length);
+                }
+
+                output.Write(outputPage, 0, outputPage.Length);
+            }
+            output.Flush(true);
+        }
+        catch
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+            throw;
+        }
+
+        File.Move(tempPath, outputPath, overwrite: true);
         return Task.FromResult(outputPath);
     }
 
