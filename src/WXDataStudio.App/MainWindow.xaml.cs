@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly WorkspaceDiffService _diffService = new();
     private readonly WorkspaceMediaService _workspaceMedia = new();
     private readonly MigrationReadinessService _migrationReadiness = new();
+    private readonly TimelineValidationService _timelineValidation = new();
     private readonly MigrationReportExporter _migrationExporter = new();
     private readonly SnapshotCatalogService _snapshotCatalog = new();
     private readonly MediaLocatorService _mediaLocator;
@@ -51,7 +52,7 @@ public partial class MainWindow : Window
         LogList.ItemsSource = _logs;
         ConversationList.ItemsSource = new[] { "Device & adapter", "Demo chat", "Demo group" };
         _demoMessages = BuildDemoMessages();
-        AddLog("WXDataStudio v0.2 started.");
+        AddLog("WXDataStudio v0.3 started.");
         AddLog("Locked baseline: MIX 2S / Android 9 / MIUI 10.3.5 / WeChat 8.0.76 (3141).");
         AddLog("Read-only snapshot parser and local workspace editor are enabled.");
         AddLog("Phone write-back remains disabled until validation and rollback gates pass.");
@@ -311,8 +312,8 @@ public partial class MainWindow : Window
         {
             _workspace = _workspaceService.Create(
                 _latestSnapshotDirectory, _currentConversation, _currentMessages);
-            MessageList.ItemsSource = _workspace.Messages;
             SetAddButtonsEnabled(true);
+            ApplyMessageFilter();
             AddLog($"Workspace created for {_currentConversation.EffectiveName}: {_workspace.Messages.Count} messages.");
             return;
         }
@@ -437,9 +438,9 @@ public partial class MainWindow : Window
                 var options = _currentDbOptions ?? new DatabaseOpenOptions { ReadOnly = true };
                 _currentMessages = await _dbReader.LoadMessagesAsync(
                     _currentDbPath, conversation.Username, options);
-                MessageList.ItemsSource = _currentMessages;
                 _workspace = null;
                 SetAddButtonsEnabled(false);
+                ApplyMessageFilter();
                 AddLog($"Loaded {_currentMessages.Count:N0} messages: {conversation.EffectiveName}");
             }
             catch (Exception ex)
@@ -455,6 +456,32 @@ public partial class MainWindow : Window
             ? messages
             : Array.Empty<MessagePreview>();
     }
+
+    private void OnMessageFilterChanged(object sender, SelectionChangedEventArgs e) =>
+        ApplyMessageFilter();
+
+    private void ApplyMessageFilter()
+    {
+        var index = MessageFilter?.SelectedIndex ?? 0;
+        if (_workspace is not null)
+        {
+            MessageList.ItemsSource = _workspace.Messages.Where(x => MatchesFilter(x.Kind, index)).ToArray();
+            return;
+        }
+        if (_currentMessages.Count > 0)
+            MessageList.ItemsSource = _currentMessages.Where(x => MatchesFilter(x.Kind, index)).ToArray();
+    }
+
+    private static bool MatchesFilter(MessageKind kind, int index) => index switch
+    {
+        1 => kind == MessageKind.Text,
+        2 => MessageKindPolicy.HasExternalMedia(kind),
+        3 => kind is MessageKind.Location or MessageKind.Link or MessageKind.MiniProgram
+            or MessageKind.ContactCard or MessageKind.Quote,
+        4 => kind is MessageKind.System or MessageKind.Call,
+        5 => MessageKindPolicy.IsSensitive(kind),
+        _ => true
+    };
 
     private async void OnMessageSelected(object sender, SelectionChangedEventArgs e)
     {
@@ -519,7 +546,8 @@ public partial class MainWindow : Window
         }
 
         var message = _workspaceService.AddMessage(_workspace, kind, content, attachment);
-        MessageList.ItemsSource = _workspace.Messages;
+        MessageFilter.SelectedIndex = 0;
+        ApplyMessageFilter();
         MessageList.Items.Refresh();
         MessageList.SelectedItem = message;
         MessageList.ScrollIntoView(message);
@@ -563,6 +591,70 @@ public partial class MainWindow : Window
     private async void OnAddQuote(object sender, RoutedEventArgs e) =>
         await AddWorkspaceMessageAsync(MessageKind.Quote,
             "<msg><appmsg><type>57</type><refermsg><displayname></displayname><content></content></refermsg></appmsg></msg>");
+
+    private async void OnReplaceMedia(object sender, RoutedEventArgs e)
+    {
+        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg || !msg.CanEdit)
+            return;
+        var dialog = new OpenFileDialog { Filter = "所有文件|*.*", Multiselect = false };
+        if (dialog.ShowDialog(this) != true) return;
+        try
+        {
+            var imported = await _workspaceMedia.ImportAsync(_workspace, dialog.FileName);
+            _workspaceService.EditAttachment(_workspace, msg.LocalId, imported);
+            PropertyAttachment.Text = imported;
+            MediaOriginalPath.Text = imported;
+            PreviewMediaButton.IsEnabled = true;
+            AddLog($"Workspace media replaced: {msg.LocalId}.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "媒体导入失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OnPreviewMedia(object sender, RoutedEventArgs e)
+    {
+        var path = MediaOriginalPath.Text;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            MessageBox.Show("当前媒体不是本地可预览文件。", "媒体预览",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+    }
+
+    private void OnValidateTimeline(object sender, RoutedEventArgs e)
+    {
+        IReadOnlyList<WeChatMessage> source = _currentMessages;
+        if (_workspace is not null)
+        {
+            source = _workspace.Messages.Select(x => new WeChatMessage
+            {
+                LocalId = x.LocalId,
+                ServerId = x.ServerId,
+                ConversationId = x.ConversationId,
+                Sender = x.Sender,
+                IsOutgoing = x.IsOutgoing,
+                RawType = x.RawType,
+                RawStatus = x.RawStatus,
+                Sequence = x.Sequence,
+                Kind = x.Kind,
+                Content = x.Content,
+                ImgPath = x.Attachment,
+                CreateTime = x.CreateTime
+            }).ToArray();
+        }
+        var issues = _timelineValidation.Validate(source);
+        MessageBox.Show(
+            issues.Count == 0 ? "时间线检查通过。" :
+                string.Join(Environment.NewLine, issues.Select(x => $"[{x.Severity}] {x.Message}")),
+            "时间线检查",
+            MessageBoxButton.OK,
+            issues.Any(x => x.Severity == MigrationCheckSeverity.Error)
+                ? MessageBoxImage.Warning : MessageBoxImage.Information);
+    }
 
     private async void OnSaveWorkspaceMessage(object sender, RoutedEventArgs e)
     {
@@ -701,6 +793,9 @@ public partial class MainWindow : Window
         PropertyAttachment.IsReadOnly = !allow;
         EditButton.IsEnabled = allow;
         UndoButton.IsEnabled = allow;
+        ReplaceMediaButton.IsEnabled = allow;
+        PreviewMediaButton.IsEnabled = File.Exists(MediaOriginalPath.Text);
+        ValidateTimelineButton.IsEnabled = _workspace is not null || _currentMessages.Count > 0;
     }
 
     private void AddLog(string text)
