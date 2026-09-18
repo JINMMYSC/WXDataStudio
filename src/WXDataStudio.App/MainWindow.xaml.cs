@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly TimelineValidationService _timelineValidation = new();
     private readonly MigrationReportExporter _migrationExporter = new();
     private readonly SnapshotCatalogService _snapshotCatalog = new();
+    private readonly RollbackPackageService _rollbackPackages = new();
     private readonly MediaLocatorService _mediaLocator;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
@@ -367,6 +368,31 @@ public partial class MainWindow : Window
                 x.Username.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                 x.Remark.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                 x.LastContent.Contains(q, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
+
+    private async void OnCreateRollbackPackage(object sender, RoutedEventArgs e)
+    {
+        _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
+        if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
+        {
+            MessageBox.Show("还没有可打包的完整快照。", "回滚包",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var result = await _rollbackPackages.CreateAsync(_latestSnapshotDirectory);
+            AddLog($"Rollback package created: {result.PackagePath}; sha256={result.Sha256}.");
+            MessageBox.Show(
+                $"回滚包已生成。\n\n{result.PackagePath}\n\nSHA-256:\n{result.Sha256}",
+                "回滚包完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Rollback package failed: {ex.Message}");
+            MessageBox.Show(ex.Message, "回滚包失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async void OnMigrationCheck(object sender, RoutedEventArgs e)
