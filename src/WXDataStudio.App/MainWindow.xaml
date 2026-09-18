@@ -17,7 +17,8 @@
                     <Button Content="数据库密钥" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseKey"/>
                     <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace"/>
                     <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff"/>
-                    <Button Content="完整性检查" Padding="14,7" Click="OnRunIntegrityCheck"/>
+                    <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck"/>
+                    <Button Content="迁移检查" Padding="14,7" Click="OnMigrationCheck"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse Width="9" Height="9" Fill="#2DA44E" Margin="0,0,7,0"/>
@@ -42,7 +43,7 @@
             <Border Grid.Column="0" Background="White" CornerRadius="6" Padding="12" BorderBrush="#E2E4E8" BorderThickness="1">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top" Text="会话" FontWeight="SemiBold" FontSize="16" Margin="0,0,0,10"/>
-                    <TextBox DockPanel.Dock="Top" x:Name="SearchBox" Height="32" Margin="0,0,0,10" ToolTip="搜索联系人、群、关键词"/>
+                    <TextBox DockPanel.Dock="Top" x:Name="SearchBox" Height="32" Margin="0,0,0,10" ToolTip="搜索联系人、群、关键词" TextChanged="OnSearchChanged"/>
                     <ListBox x:Name="ConversationList" SelectionChanged="OnConversationSelected"/>
                 </DockPanel>
             </Border>
@@ -129,7 +130,16 @@
                             <TextBlock Text="AppId / 卡片 ID"/><TextBox x:Name="CardAppId" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="地址"/><TextBox x:Name="LocationAddress" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="经度 / 纬度"/><TextBox x:Name="LocationLatLng" IsReadOnly="True" Margin="0,2,0,8"/>
-                        </StackPanel></ScrollViewer></TabItem>                        <TabItem Header="交易/红包"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
+                        </StackPanel></ScrollViewer></TabItem>
+                        <TabItem Header="引用/小程序/名片"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
+                            <TextBlock Text="引用发送者"/><TextBox x:Name="QuoteSenderBox" IsReadOnly="True" Margin="0,2,0,8"/>
+                            <TextBlock Text="引用内容"/><TextBox x:Name="QuoteContentBox" IsReadOnly="True" TextWrapping="Wrap" Height="76" Margin="0,2,0,8"/>
+                            <TextBlock Text="小程序用户名"/><TextBox x:Name="MiniProgramUserNameBox" IsReadOnly="True" Margin="0,2,0,8"/>
+                            <TextBlock Text="小程序路径"/><TextBox x:Name="MiniProgramPathBox" IsReadOnly="True" Margin="0,2,0,8"/>
+                            <TextBlock Text="名片用户名"/><TextBox x:Name="ContactUserNameBox" IsReadOnly="True" Margin="0,2,0,8"/>
+                            <TextBlock Text="名片昵称"/><TextBox x:Name="ContactNickNameBox" IsReadOnly="True" Margin="0,2,0,8"/>
+                        </StackPanel></ScrollViewer></TabItem>
+                        <TabItem Header="交易/红包"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
                             <Border Background="#FFF8E1" BorderBrush="#E5B300" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,10">
                                 <TextBlock Text="交易、红包、收付款和账单类记录只做读取与展示，不作为可伪造凭证写回。" TextWrapping="Wrap" Foreground="#7A5A00"/>
                             </Border>
