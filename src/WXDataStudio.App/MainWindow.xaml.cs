@@ -217,9 +217,8 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!await _adb.IsAvailableAsync())
-                throw new InvalidOperationException("ADB is not available.");
-            var diagnostics = await _legacyKeyCandidates.DiagnoseAsync();
+            _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
+            var diagnostics = await _legacyKeyCandidates.DiagnoseAsync(_latestSnapshotDirectory);
             var sources = diagnostics.TokenSources.Count == 0
                 ? "无"
                 : string.Join("、", diagnostics.TokenSources);
@@ -235,7 +234,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AddLog($"Key diagnostics unavailable: {ex.Message}");
-            MessageBox.Show("当前无法读取手机端密钥诊断信息。离线快照仍可继续使用。\n\n" + ex.Message,
+            MessageBox.Show("当前无法从本地快照或已连接手机读取密钥诊断信息。\n\n" + ex.Message,
                 "数据库密钥诊断", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
