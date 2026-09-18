@@ -77,6 +77,8 @@ public sealed class WorkspaceService
     public void EditAttachment(WorkspaceDocument workspace, long messageId, string? path)
     {
         var msg = GetEditable(workspace, messageId);
+        if (!string.IsNullOrWhiteSpace(path) && !MessageKindPolicy.HasExternalMedia(msg.Kind))
+            throw new InvalidOperationException("This message type does not support external media replacement.");
         Audit(workspace, msg, "attachment", msg.Attachment ?? "", path ?? "");
         msg.Attachment = path;
     }
