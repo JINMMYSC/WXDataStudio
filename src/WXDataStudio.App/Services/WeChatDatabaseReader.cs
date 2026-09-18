@@ -4,6 +4,12 @@ using WXDataStudio.App.Models;
 
 namespace WXDataStudio.App.Services;
 
+public sealed record WeChatSchemaInfo(
+    string? MessageTable,
+    string? ConversationTable,
+    string? ContactTable,
+    bool UsesConversationFallback);
+
 public sealed class WeChatDatabaseReader
 {
     private static int _initialized;
@@ -18,49 +24,74 @@ public sealed class WeChatDatabaseReader
         string path, DatabaseOpenOptions? options = null)
     {
         await using var connection = await OpenAsync(path, options);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name";
-        var list = new List<string>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync()) list.Add(reader.GetString(0));
-        return list;
+        return (await GetTableInfosAsync(connection)).Select(x => x.Name).OrderBy(x => x).ToArray();
+    }
+
+    public async Task<WeChatSchemaInfo> DetectSchemaAsync(
+        string path, DatabaseOpenOptions? options = null)
+    {
+        await using var connection = await OpenAsync(path, options);
+        var schema = await DetectSchemaOnConnectionAsync(connection);
+        return new WeChatSchemaInfo(
+            schema.Message?.Name,
+            schema.Conversation?.Name,
+            schema.Contact?.Name,
+            schema.Conversation is null && schema.Message is not null);
     }
 
     public async Task<IReadOnlyList<ConversationItem>> LoadConversationsAsync(
         string path, DatabaseOpenOptions? options = null, int limit = 500)
     {
         await using var connection = await OpenAsync(path, options);
-        if (!await TableExistsAsync(connection, "rconversation"))
-            throw new InvalidOperationException("rconversation table was not found.");
-        var columns = await GetColumnsAsync(connection, "rconversation");
-        var contactExists = await TableExistsAsync(connection, "rcontact");
-        return await QueryConversationsAsync(connection, columns, contactExists, limit);
+        var schema = await DetectSchemaOnConnectionAsync(connection);
+
+        if (schema.Conversation is not null)
+            return await QueryConversationsAsync(
+                connection, schema.Conversation, schema.Contact, limit);
+
+        if (schema.Message is not null)
+            return await QueryConversationsFromMessagesAsync(
+                connection, schema.Message, schema.Contact, limit);
+
+        throw new InvalidOperationException(
+            "No compatible conversation or message table could be detected.");
     }
 
     public async Task<IReadOnlyList<WeChatMessage>> LoadMessagesAsync(
         string path, string talker, DatabaseOpenOptions? options = null, int limit = 1000)
     {
         await using var connection = await OpenAsync(path, options);
-        if (!await TableExistsAsync(connection, "message"))
-            throw new InvalidOperationException("message table was not found.");
-        var columns = await GetColumnsAsync(connection, "message");
-        if (!columns.Contains("talker"))
-            throw new InvalidOperationException("message.talker column was not found.");
+        var schema = await DetectSchemaOnConnectionAsync(connection);
+        var message = schema.Message
+            ?? throw new InvalidOperationException("No compatible message table could be detected.");
+
+        var talkerColumn = FindColumn(message.Columns, "talker", "username", "conversationId")
+            ?? throw new InvalidOperationException(
+                $"Message table [{message.Name}] has no recognized talker column.");
 
         var fields = new[]
         {
-            Pick(columns, "msgId", "0"), Pick(columns, "msgSvrId", "NULL"),
-            Pick(columns, "talker", "''"), Pick(columns, "isSend", "0"),
-            Pick(columns, "type", "0"), Pick(columns, "status", "0"),
-            Pick(columns, "createTime", "0"), Pick(columns, "msgSeq", "0"),
-            Pick(columns, "content", "''"), Pick(columns, "imgPath", "NULL"),
-            Pick(columns, "reserved", "NULL")
+            Pick(message.Columns, "0", "msgId", "localId", "msgLocalId"),
+            Pick(message.Columns, "NULL", "msgSvrId", "serverId", "msgServerId"),
+            Q(talkerColumn),
+            Pick(message.Columns, "0", "isSend", "isOutgoing"),
+            Pick(message.Columns, "0", "type", "msgType"),
+            Pick(message.Columns, "0", "status", "msgStatus"),
+            Pick(message.Columns, "0", "createTime", "time", "timestamp"),
+            Pick(message.Columns, "0", "msgSeq", "sequence", "seq"),
+            Pick(message.Columns, "''", "content", "body", "text"),
+            Pick(message.Columns, "NULL", "imgPath", "imagePath", "mediaPath"),
+            Pick(message.Columns, "NULL", "reserved", "lvbuffer", "extra")
         };
+
+        var timeColumn = FindColumn(message.Columns, "createTime", "time", "timestamp");
+        var order = timeColumn is null ? "1" : Q(timeColumn);
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"SELECT {string.Join(',', fields)} FROM message " +
-                          "WHERE talker=$talker ORDER BY createTime DESC LIMIT $limit";
+        cmd.CommandText = $"SELECT {string.Join(',', fields)} FROM {Q(message.Name)} " +
+                          $"WHERE {Q(talkerColumn)}=$talker ORDER BY {order} DESC LIMIT $limit";
         cmd.Parameters.AddWithValue("$talker", talker);
         cmd.Parameters.AddWithValue("$limit", limit);
+
         var rows = new List<WeChatMessage>();
         await using var r = await cmd.ExecuteReaderAsync();
         while (await r.ReadAsync()) rows.Add(ReadMessage(r));
@@ -69,34 +100,109 @@ public sealed class WeChatDatabaseReader
     }
 
     private static async Task<IReadOnlyList<ConversationItem>> QueryConversationsAsync(
-        SqliteConnection c, HashSet<string> cols, bool contactExists, int limit)
+        SqliteConnection c, TableInfo conversation, TableInfo? contact, int limit)
     {
-        var time = cols.Contains("conversationTime") ? "cv.[conversationTime]" : "0";
-        var content = cols.Contains("content") ? "cv.[content]" : "''";
-        var user = cols.Contains("username") ? "cv.[username]" : "''";
-        var join = contactExists ? "LEFT JOIN rcontact rc ON rc.username=cv.username" : "";
-        var remark = contactExists ? "COALESCE(rc.conRemark,'')" : "''";
-        var nick = contactExists ? "COALESCE(rc.nickname,'')" : "''";
+        var userColumn = FindColumn(conversation.Columns, "username", "talker", "conversationId");
+        if (userColumn is null)
+            throw new InvalidOperationException(
+                $"Conversation table [{conversation.Name}] has no recognized username column.");
+
+        var timeColumn = FindColumn(conversation.Columns,
+            "conversationTime", "lastTime", "createTime", "timestamp");
+        var contentColumn = FindColumn(conversation.Columns,
+            "content", "digest", "lastContent");
+
+        var contactUser = contact is null
+            ? null
+            : FindColumn(contact.Columns, "username", "talker", "userName");
+        var remarkColumn = contact is null
+            ? null
+            : FindColumn(contact.Columns, "conRemark", "remark", "displayName");
+        var nickColumn = contact is null
+            ? null
+            : FindColumn(contact.Columns, "nickname", "nickName", "name");
+
+        var join = contact is not null && contactUser is not null
+            ? $"LEFT JOIN {Q(contact.Name)} rc ON rc.{Q(contactUser)}=cv.{Q(userColumn)}"
+            : "";
+        var remark = remarkColumn is not null && join.Length > 0
+            ? $"COALESCE(rc.{Q(remarkColumn)},'')"
+            : "''";
+        var nick = nickColumn is not null && join.Length > 0
+            ? $"COALESCE(rc.{Q(nickColumn)},'')"
+            : "''";
+        var content = contentColumn is null ? "''" : $"cv.{Q(contentColumn)}";
+        var time = timeColumn is null ? "0" : $"cv.{Q(timeColumn)}";
+
         await using var cmd = c.CreateCommand();
-        cmd.CommandText = $"SELECT {user}, {remark}, {nick}, {content}, {time} " +
-                          $"FROM rconversation cv {join} ORDER BY {time} DESC LIMIT $limit";
+        cmd.CommandText =
+            $"SELECT cv.{Q(userColumn)}, {remark}, {nick}, {content}, {time} " +
+            $"FROM {Q(conversation.Name)} cv {join} ORDER BY {time} DESC LIMIT $limit";
         cmd.Parameters.AddWithValue("$limit", limit);
+
         var items = new List<ConversationItem>();
         await using var r = await cmd.ExecuteReaderAsync();
         while (await r.ReadAsync())
-        {
-            var username = Text(r, 0);
-            if (string.IsNullOrWhiteSpace(username)) continue;
-            items.Add(new ConversationItem
-            {
-                Username = username,
-                Remark = Text(r, 1),
-                NickName = Text(r, 2),
-                LastContent = Text(r, 3),
-                LastTime = Int64(r, 4)
-            });
-        }
+            AddConversation(items, r);
         return items;
+    }
+
+    private static async Task<IReadOnlyList<ConversationItem>> QueryConversationsFromMessagesAsync(
+        SqliteConnection c, TableInfo message, TableInfo? contact, int limit)
+    {
+        var talkerColumn = FindColumn(message.Columns, "talker", "username", "conversationId")
+            ?? throw new InvalidOperationException(
+                $"Message table [{message.Name}] has no recognized talker column.");
+        var timeColumn = FindColumn(message.Columns, "createTime", "time", "timestamp");
+
+        var contactUser = contact is null
+            ? null
+            : FindColumn(contact.Columns, "username", "talker", "userName");
+        var remarkColumn = contact is null
+            ? null
+            : FindColumn(contact.Columns, "conRemark", "remark", "displayName");
+        var nickColumn = contact is null
+            ? null
+            : FindColumn(contact.Columns, "nickname", "nickName", "name");
+
+        var join = contact is not null && contactUser is not null
+            ? $"LEFT JOIN {Q(contact.Name)} rc ON rc.{Q(contactUser)}=m.{Q(talkerColumn)}"
+            : "";
+        var remark = remarkColumn is not null && join.Length > 0
+            ? $"COALESCE(MAX(rc.{Q(remarkColumn)}),'')"
+            : "''";
+        var nick = nickColumn is not null && join.Length > 0
+            ? $"COALESCE(MAX(rc.{Q(nickColumn)}),'')"
+            : "''";
+        var time = timeColumn is null ? "0" : $"MAX(m.{Q(timeColumn)})";
+
+        await using var cmd = c.CreateCommand();
+        cmd.CommandText =
+            $"SELECT m.{Q(talkerColumn)}, {remark}, {nick}, '', {time} " +
+            $"FROM {Q(message.Name)} m {join} " +
+            $"WHERE m.{Q(talkerColumn)} IS NOT NULL AND m.{Q(talkerColumn)}<>'' " +
+            $"GROUP BY m.{Q(talkerColumn)} ORDER BY {time} DESC LIMIT $limit";
+        cmd.Parameters.AddWithValue("$limit", limit);
+
+        var items = new List<ConversationItem>();
+        await using var r = await cmd.ExecuteReaderAsync();
+        while (await r.ReadAsync())
+            AddConversation(items, r);
+        return items;
+    }
+
+    private static void AddConversation(List<ConversationItem> items, SqliteDataReader r)
+    {
+        var username = Text(r, 0);
+        if (string.IsNullOrWhiteSpace(username)) return;
+        items.Add(new ConversationItem
+        {
+            Username = username,
+            Remark = Text(r, 1),
+            NickName = Text(r, 2),
+            LastContent = Text(r, 3),
+            LastTime = Int64(r, 4)
+        });
     }
 
     private static WeChatMessage ReadMessage(SqliteDataReader r)
@@ -108,6 +214,7 @@ public sealed class WeChatDatabaseReader
         var group = !isOutgoing && conversationId.EndsWith("@chatroom", StringComparison.OrdinalIgnoreCase)
             ? GroupMessageParser.Parse(content)
             : new GroupMessageEnvelope("", content);
+
         return new WeChatMessage
         {
             LocalId = Int64(r, 0),
@@ -162,32 +269,88 @@ public sealed class WeChatDatabaseReader
     {
         var hex = new string(value.Where(Uri.IsHexDigit).ToArray()).ToLowerInvariant();
         if (hex.Length == 0 || hex.Length % 2 != 0)
-            throw new ArgumentException("Raw key must contain an even number of hexadecimal characters.");
+            throw new ArgumentException(
+                "Raw key must contain an even number of hexadecimal characters.");
         return hex;
     }
-    private static async Task<bool> TableExistsAsync(SqliteConnection c, string name)
+
+    private static async Task<SchemaProfile> DetectSchemaOnConnectionAsync(SqliteConnection connection)
     {
-        await using var cmd = c.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=$name LIMIT 1";
-        cmd.Parameters.AddWithValue("$name", name);
-        return await cmd.ExecuteScalarAsync() is not null;
+        var tables = await GetTableInfosAsync(connection);
+
+        var message = tables.FirstOrDefault(x =>
+                          x.Name.Equals("message", StringComparison.OrdinalIgnoreCase))
+                      ?? tables.FirstOrDefault(x =>
+                          HasAny(x.Columns, "talker", "username", "conversationId") &&
+                          HasAny(x.Columns, "content", "body", "text") &&
+                          HasAny(x.Columns, "type", "msgType") &&
+                          HasAny(x.Columns, "createTime", "time", "timestamp"));
+
+        var conversation = tables.FirstOrDefault(x =>
+                               x.Name.Equals("rconversation", StringComparison.OrdinalIgnoreCase))
+                           ?? tables.FirstOrDefault(x =>
+                               HasAny(x.Columns, "username", "talker", "conversationId") &&
+                               HasAny(x.Columns, "content", "digest", "lastContent") &&
+                               HasAny(x.Columns,
+                                   "conversationTime", "lastTime", "createTime", "timestamp"));
+
+        var contact = tables.FirstOrDefault(x =>
+                          x.Name.Equals("rcontact", StringComparison.OrdinalIgnoreCase))
+                      ?? tables.FirstOrDefault(x =>
+                          HasAny(x.Columns, "username", "talker", "userName") &&
+                          HasAny(x.Columns, "nickname", "nickName", "conRemark", "remark"));
+
+        return new SchemaProfile(message, conversation, contact);
+    }
+
+    private static async Task<IReadOnlyList<TableInfo>> GetTableInfosAsync(SqliteConnection c)
+    {
+        var names = new List<string>();
+        await using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText =
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
+            await using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync()) names.Add(r.GetString(0));
+        }
+
+        var tables = new List<TableInfo>();
+        foreach (var name in names)
+            tables.Add(new TableInfo(name, await GetColumnsAsync(c, name)));
+        return tables;
     }
 
     private static async Task<HashSet<string>> GetColumnsAsync(SqliteConnection c, string table)
     {
         await using var cmd = c.CreateCommand();
-        cmd.CommandText = $"PRAGMA table_info([{table.Replace("]", "]]", StringComparison.Ordinal)}])";
+        cmd.CommandText = $"PRAGMA table_info({Q(table)})";
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await using var r = await cmd.ExecuteReaderAsync();
         while (await r.ReadAsync()) set.Add(r.GetString(1));
         return set;
     }
 
-    private static string Pick(HashSet<string> columns, string name, string fallback) =>
-        columns.Contains(name) ? $"[{name}]" : fallback;
+    private static bool HasAny(HashSet<string> columns, params string[] names) =>
+        names.Any(columns.Contains);
 
-    private static string Text(SqliteDataReader r, int i) => r.IsDBNull(i) ? "" : Convert.ToString(r.GetValue(i)) ?? "";
-    private static string? NullText(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i));
+    private static string? FindColumn(HashSet<string> columns, params string[] names) =>
+        names.FirstOrDefault(columns.Contains);
+
+    private static string Pick(HashSet<string> columns, string fallback, params string[] names)
+    {
+        var column = FindColumn(columns, names);
+        return column is null ? fallback : Q(column);
+    }
+
+    private static string Q(string identifier) =>
+        "[" + identifier.Replace("]", "]]", StringComparison.Ordinal) + "]";
+
+    private static string Text(SqliteDataReader r, int i) =>
+        r.IsDBNull(i) ? "" : Convert.ToString(r.GetValue(i)) ?? "";
+
+    private static string? NullText(SqliteDataReader r, int i) =>
+        r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i));
+
     private static long Int64(SqliteDataReader r, int i)
     {
         if (r.IsDBNull(i)) return 0;
@@ -201,5 +364,12 @@ public sealed class WeChatDatabaseReader
             _ => long.TryParse(Convert.ToString(value), out var parsed) ? parsed : 0
         };
     }
+
     private static int Int32(SqliteDataReader r, int i) => unchecked((int)Int64(r, i));
+
+    private sealed record TableInfo(string Name, HashSet<string> Columns);
+    private sealed record SchemaProfile(
+        TableInfo? Message,
+        TableInfo? Conversation,
+        TableInfo? Contact);
 }
