@@ -49,7 +49,7 @@ public static class MessageTypeClassifier
         if (ContainsAny(content, "<appattach>", "<totallen>", "<fileext>")) return MessageKind.File;
         if (ContainsAny(content, "<weappinfo>", "<appservicetype>")) return MessageKind.MiniProgram;
         if (ContainsAny(content, "<refermsg>", "<refermsgid>")) return MessageKind.Quote;
-        if (type == type == 42 || ContainsAny(content, "<username>", "<nickname>")) return MessageKind.ContactCard;
+        if (type == 42 || ContainsAny(content, "<username>", "<nickname>")) return MessageKind.ContactCard;
         return MessageKind.Unknown;
     }
 
