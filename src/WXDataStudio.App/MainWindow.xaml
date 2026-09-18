@@ -22,7 +22,8 @@
                     <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff"/>
                     <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck"/>
                     <Button Content="回滚包" Padding="14,7" Margin="0,0,8,0" Click="OnCreateRollbackPackage"/>
-                    <Button Content="迁移检查" Padding="14,7" Click="OnMigrationCheck"/>
+                    <Button Content="迁移检查" Padding="14,7" Margin="0,0,8,0" Click="OnMigrationCheck"/>
+                    <Button Content="阶段三验收" Padding="14,7" Click="OnStage3Acceptance"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse x:Name="DeviceIndicator" Width="9" Height="9" Fill="#8C959F" Margin="0,0,7,0"/>
