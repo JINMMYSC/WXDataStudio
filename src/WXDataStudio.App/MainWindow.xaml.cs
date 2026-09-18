@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using Microsoft.Win32;
 using WXDataStudio.App.Models;
 using WXDataStudio.App.Services;
 
@@ -21,6 +23,7 @@ public partial class MainWindow : Window
     private readonly WorkspaceDiffService _diffService = new();
     private readonly MigrationReadinessService _migrationReadiness = new();
     private readonly MigrationReportExporter _migrationExporter = new();
+    private readonly SnapshotCatalogService _snapshotCatalog = new();
     private readonly MediaLocatorService _mediaLocator;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
@@ -32,6 +35,7 @@ public partial class MainWindow : Window
     private string? _currentDbPath;
     private string? _latestSnapshotDirectory;
     private DatabaseCredentialResolution? _credential;
+    private SnapshotCatalogItem? _currentSnapshot;
     private DatabaseOpenOptions? _currentDbOptions;
     private string? _manualDatabaseKey;
     private bool _manualDatabaseKeyIsRawHex;
@@ -50,6 +54,98 @@ public partial class MainWindow : Window
         AddLog("Locked baseline: MIX 2S / Android 9 / MIUI 10.3.5 / WeChat 8.0.76 (3141).");
         AddLog("Read-only snapshot parser and local workspace editor are enabled.");
         AddLog("Phone write-back remains disabled until validation and rollback gates pass.");
+        Loaded += async (_, _) => await InitializeOfflineStateAsync();
+    }
+
+    private async Task InitializeOfflineStateAsync()
+    {
+        try
+        {
+            var latest = await _snapshotCatalog.FindLatestUsableAsync();
+            if (latest is null)
+            {
+                DeviceBadge.Text = "离线模式 / 手机未连接";
+                SnapshotBadge.Text = "暂无可用本地快照";
+                DeviceIndicator.Fill = Brushes.Gray;
+                AddLog("Offline mode ready. No usable local snapshot was found.");
+                return;
+            }
+
+            SelectSnapshot(latest);
+            DeviceBadge.Text = "离线模式 / 可解析本地快照";
+            DeviceIndicator.Fill = Brushes.DarkOrange;
+            ConversationList.ItemsSource = new[] { "本地快照已就绪 · 点击“解析快照”" };
+            AddLog($"Offline snapshot ready: {latest.DirectoryPath}");
+        }
+        catch (Exception ex)
+        {
+            SnapshotBadge.Text = "本地快照检查失败";
+            DeviceIndicator.Fill = Brushes.Gray;
+            AddLog($"Offline snapshot initialization failed: {ex.Message}");
+        }
+    }
+
+    private void SelectSnapshot(SnapshotCatalogItem item)
+    {
+        _currentSnapshot = item;
+        _latestSnapshotDirectory = item.DirectoryPath;
+        _currentDbPath = null;
+        _currentDbOptions = null;
+        _credential = null;
+        _workspace = null;
+        _currentConversation = null;
+        _currentConversations = Array.Empty<ConversationItem>();
+        _currentMessages = Array.Empty<WeChatMessage>();
+        SnapshotBadge.Text = $"快照：{item.DisplayName}";
+    }
+
+    private async void OnSelectSnapshot(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "选择 WXDataStudio 快照目录",
+            InitialDirectory = Directory.Exists(_snapshotCatalog.RootDirectory)
+                ? _snapshotCatalog.RootDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        var item = await _snapshotCatalog.InspectDirectoryAsync(dialog.FolderName);
+        if (item is null || !item.IsUsable)
+        {
+            MessageBox.Show("这个目录不是可用的 WXDataStudio 快照，或缺少有效 manifest/EnMicroMsg.db。",
+                "快照不可用", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        SelectSnapshot(item);
+        ConversationList.ItemsSource = new[] { "已选择本地快照 · 点击“解析快照”" };
+        AddLog($"Snapshot selected: {item.DirectoryPath}");
+    }
+
+    private async void OnDatabaseDiagnostics(object sender, RoutedEventArgs e)
+    {
+        _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
+        if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
+        {
+            MessageBox.Show("没有可诊断的本地快照。", "数据库诊断",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var issues = await _integrity.CheckAsync(_latestSnapshotDirectory);
+        var db = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
+        var info = await _dbInspector.InspectAsync(db);
+        var wal = File.Exists(Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db-wal"));
+        var shm = File.Exists(Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db-shm"));
+        var report = $"快照：{_latestSnapshotDirectory}\n" +
+                     $"主库：{info.Size:N0} bytes\n" +
+                     $"数据库：{info.Status}\n" +
+                     $"WAL：{(wal ? "存在" : "缺失")}\n" +
+                     $"SHM：{(shm ? "存在" : "缺失")}\n" +
+                     $"完整性：{(issues.Count == 0 ? "通过" : string.Join("；", issues))}";
+        MessageBox.Show(report, "数据库诊断", MessageBoxButton.OK,
+            issues.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
     }
 
     private async void OnRefreshDevice(object sender, RoutedEventArgs e)
@@ -62,6 +158,7 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("ADB is not available.");
             _device = await _adb.ProbeAsync();
             DeviceBadge.Text = $"{_device.Model} / WeChat {_device.WeChatVersion}";
+            DeviceIndicator.Fill = Brushes.ForestGreen;
             AddLog($"Device: {_device.Model} ({_device.Codename}), Android {_device.AndroidVersion}, {_device.MiuiVersion}");
             AddLog($"Root: {_device.RootAvailable}; bootloader unlocked: {_device.BootloaderUnlocked}");
             AddLog($"WeChat: {_device.WeChatVersion} ({_device.WeChatVersionCode}); private account: {_device.AccountDirectory}");
@@ -72,9 +169,10 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            DeviceBadge.Text = "设备检测失败";
-            AddLog($"Device detection failed: {ex.Message}");
-            MessageBox.Show(ex.Message, "设备检测失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            DeviceBadge.Text = "离线模式 / 手机未连接";
+            DeviceIndicator.Fill = Brushes.Gray;
+            AddLog($"Device unavailable: {ex.Message}");
+            AddLog("Local snapshot analysis remains available while the phone is offline.");
         }
     }
 
@@ -87,6 +185,8 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Connected device does not match the validated baseline.");
             var result = await _snapshots.CreateDatabaseSnapshotAsync(_device, AddLog);
             _latestSnapshotDirectory = result.DirectoryPath;
+            var snapshotItem = await _snapshotCatalog.InspectDirectoryAsync(result.DirectoryPath);
+            if (snapshotItem is not null && snapshotItem.IsUsable) SelectSnapshot(snapshotItem);
             AddLog($"Snapshot directory: {result.DirectoryPath}");
             MessageBox.Show("只读数据库快照完成。\n\n" + result.DirectoryPath,
                 "快照完成", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -170,6 +270,9 @@ public partial class MainWindow : Window
             _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
             if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
                 throw new InvalidOperationException("还没有可解析的快照，请先创建快照。");
+            var integrityIssues = await _integrity.CheckAsync(_latestSnapshotDirectory);
+            if (integrityIssues.Count > 0)
+                throw new InvalidDataException("快照完整性检查未通过：" + string.Join("；", integrityIssues));
             var db = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
             var info = await _dbInspector.InspectAsync(db);
             _currentDbPath = db;
@@ -532,6 +635,12 @@ public partial class MainWindow : Window
             "WXDataStudio", "snapshots");
         if (!Directory.Exists(root)) return null;
         return Directory.GetDirectories(root)
+            .Where(x => File.Exists(Path.Combine(x, "manifest.json")))
+            .Where(x =>
+            {
+                var db = Path.Combine(x, "EnMicroMsg.db");
+                return File.Exists(db) && new FileInfo(db).Length > 0;
+            })
             .OrderByDescending(x => x, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
     }
