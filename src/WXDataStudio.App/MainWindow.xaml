@@ -9,7 +9,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="WXDataStudio" FontSize="22" FontWeight="SemiBold" Margin="0,0,22,0"/>
                     <Button Content="设备" Padding="14,7" Margin="0,0,8,0" Click="OnRefreshDevice"/>
                     <Button Content="快照" Padding="14,7" Margin="0,0,8,0" Click="OnCreateSnapshot"/>
@@ -24,7 +24,7 @@
                     <Button Content="回滚包" Padding="14,7" Margin="0,0,8,0" Click="OnCreateRollbackPackage"/>
                     <Button Content="迁移检查" Padding="14,7" Margin="0,0,8,0" Click="OnMigrationCheck"/>
                     <Button Content="阶段三验收" Padding="14,7" Click="OnStage3Acceptance"/>
-                </StackPanel>
+                </WrapPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse x:Name="DeviceIndicator" Width="9" Height="9" Fill="#8C959F" Margin="0,0,7,0"/>
                     <StackPanel>
