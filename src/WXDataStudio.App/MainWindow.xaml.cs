@@ -669,6 +669,7 @@ public partial class MainWindow : Window
 
     private void ApplyMessageFilter()
     {
+        if (MessageList is null) return;
         var index = MessageFilter?.SelectedIndex ?? 0;
         var query = MessageSearchBox?.Text.Trim() ?? "";
         if (_workspace is not null)
