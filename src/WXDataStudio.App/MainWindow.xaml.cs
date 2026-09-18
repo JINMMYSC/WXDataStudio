@@ -213,6 +213,33 @@ public partial class MainWindow : Window
             : "Session database key supplied (content not logged)." );
     }
 
+    private async void OnKeyDiagnostics(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (!await _adb.IsAvailableAsync())
+                throw new InvalidOperationException("ADB is not available.");
+            var diagnostics = await _legacyKeyCandidates.DiagnoseAsync();
+            var sources = diagnostics.TokenSources.Count == 0
+                ? "无"
+                : string.Join("、", diagnostics.TokenSources);
+            var report =
+                $"UIN：{(diagnostics.UinFound ? "已找到" : "未找到")}\n" +
+                $"设备标识来源：{sources}\n" +
+                $"受限候选数量：{diagnostics.CandidateCount}\n\n" +
+                "诊断不会显示 UIN、IMEI、数据库密钥或 Raw Key 的实际值。";
+            AddLog($"Key diagnostics: uin={diagnostics.UinFound}; sources={diagnostics.TokenSources.Count}; candidates={diagnostics.CandidateCount}.");
+            MessageBox.Show(report, "数据库密钥诊断",
+                MessageBoxButton.OK, diagnostics.UinFound ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Key diagnostics unavailable: {ex.Message}");
+            MessageBox.Show("当前无法读取手机端密钥诊断信息。离线快照仍可继续使用。\n\n" + ex.Message,
+                "数据库密钥诊断", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private async Task<DatabaseOpenOptions?> ResolveDatabaseOptionsAsync(string db, bool encrypted)
     {
         if (!encrypted)
