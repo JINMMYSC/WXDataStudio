@@ -133,6 +133,15 @@ var legacyTables = await reader.ListTablesAsync(legacyDbPath,
     new DatabaseOpenOptions { Password = "smoke-secret", UseLegacyWeChatCipher = true });
 Assert(legacyTables.Contains("smoke"), "legacy SQLCipher profile open failed");
 
+var sc1 = new LegacySc1PageDecryptService();
+Assert(sc1.MatchesPassword(legacyDbPath, "smoke-secret"), "SC1 password first-page match failed");
+Assert(!sc1.MatchesPassword(legacyDbPath, "wrong-secret"), "SC1 wrong password unexpectedly matched");
+var sc1PlainPath = Path.Combine(root, "legacy-sc1-plain.db");
+await sc1.DecryptWithPasswordAsync(legacyDbPath, "smoke-secret", sc1PlainPath);
+var sc1PlainTables = await reader.ListTablesAsync(
+    sc1PlainPath, new DatabaseOpenOptions { ReadOnly = true });
+Assert(sc1PlainTables.Contains("smoke"), "SC1 page decrypt output did not open as plain SQLite");
+
 var rawDbPath = Path.Combine(root, "raw-encrypted.db");
 const string rawHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 await using (var connection = new SqliteConnection($"Data Source={rawDbPath}"))
