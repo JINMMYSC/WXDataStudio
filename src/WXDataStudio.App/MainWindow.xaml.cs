@@ -468,6 +468,103 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnStage3Acceptance(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            AddLog("Stage3 acceptance started (read-only).");
+            _device = await _adb.ProbeAsync();
+            if (!_device.MatchesLockedBaseline)
+                throw new InvalidOperationException(
+                    "连接设备不符合锁定基线：MIX 2S / Android 9 / WeChat 8.0.76 (3141)。");
+
+            var snapshot = await _snapshots.CreateDatabaseSnapshotAsync(_device, AddLog);
+            var catalogItem = await _snapshotCatalog.InspectDirectoryAsync(snapshot.DirectoryPath)
+                ?? throw new InvalidDataException("新快照目录无法建立目录索引。");
+            if (!catalogItem.IsUsable)
+                throw new InvalidDataException("新快照不可用。");
+            SelectSnapshot(catalogItem);
+
+            var integrity = await _integrity.CheckAsync(snapshot.DirectoryPath);
+            if (integrity.Count > 0)
+                throw new InvalidDataException(
+                    "新快照完整性检查失败：" + string.Join("；", integrity));
+
+            var db = Path.Combine(snapshot.DirectoryPath, "EnMicroMsg.db");
+            var info = await _dbInspector.InspectAsync(db);
+            _currentDbPath = db;
+            var options = await ResolveDatabaseOptionsAsync(db, info.AppearsEncrypted);
+            if (options is null)
+                throw new InvalidOperationException(
+                    "数据库仍未能以受支持的只读方式打开。快照已保留，可继续密钥诊断。");
+
+            _currentDbOptions = options;
+            var activeDb = _currentDbPath ?? db;
+            var schema = await _dbReader.DetectSchemaAsync(activeDb, options);
+            if (schema.MessageTable is null && schema.ConversationTable is null)
+                throw new InvalidDataException("数据库已打开，但没有识别到兼容的聊天表结构。");
+
+            var conversations = await _dbReader.LoadConversationsAsync(activeDb, options);
+            if (conversations.Count == 0)
+                throw new InvalidDataException("数据库已打开，但没有读取到会话记录。");
+
+            var sampleMessages = 0;
+            foreach (var conversation in conversations.Take(3))
+            {
+                try
+                {
+                    sampleMessages += (await _dbReader.LoadMessagesAsync(
+                        activeDb, conversation.Username, options, 50)).Count;
+                }
+                catch
+                {
+                    // One unusual conversation should not hide overall adapter acceptance.
+                }
+            }
+
+            _currentConversations = conversations;
+            ConversationList.ItemsSource = conversations;
+            _workspace = null;
+            _currentConversation = null;
+            _currentMessages = Array.Empty<WeChatMessage>();
+            SetAddButtonsEnabled(false);
+            DeviceBadge.Text = $"{_device.Model} / WeChat {_device.WeChatVersion}";
+            DeviceIndicator.Fill = Brushes.ForestGreen;
+
+            var output = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "WXDataStudio", "reports");
+            Directory.CreateDirectory(output);
+            var reportPath = Path.Combine(output,
+                $"stage3-acceptance-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            var report =
+                "WXDataStudio Stage 3 Read-only Acceptance\n" +
+                $"Time: {DateTimeOffset.Now:O}\n" +
+                $"Device: {_device.Model} / Android {_device.AndroidVersion} / WeChat {_device.WeChatVersion} ({_device.WeChatVersionCode})\n" +
+                $"Snapshot: {snapshot.DirectoryPath}\n" +
+                $"Database: {info.Status}\n" +
+                $"Credential source: {_credential?.Source ?? "plain"}\n" +
+                $"Message table: {schema.MessageTable ?? "(none)"}\n" +
+                $"Conversation table: {schema.ConversationTable ?? "(message fallback)"}\n" +
+                $"Contact table: {schema.ContactTable ?? "(none)"}\n" +
+                $"Conversations: {conversations.Count}\n" +
+                $"Sample messages (first 3 conversations, max 50 each): {sampleMessages}\n" +
+                "Phone write-back: DISABLED\n";
+            await File.WriteAllTextAsync(reportPath, report);
+            AddLog($"Stage3 acceptance passed: conversations={conversations.Count}; sampleMessages={sampleMessages}.");
+            MessageBox.Show(
+                $"阶段三只读验收通过。\n\n会话：{conversations.Count}\n抽样消息：{sampleMessages}\n\n报告：\n{reportPath}",
+                "阶段三验收通过", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Stage3 acceptance blocked: {ex.Message}");
+            MessageBox.Show(
+                "阶段三验收尚未通过，但不会写回或修改手机数据库。\n\n" + ex.Message,
+                "阶段三验收", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void OnMigrationCheck(object sender, RoutedEventArgs e)
     {
         _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
