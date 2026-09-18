@@ -6,7 +6,7 @@ public sealed class TimelineValidationService
 {
     public IReadOnlyList<MigrationCheckItem> Validate(IEnumerable<WeChatMessage> source)
     {
-        var messages = source.OrderBy(x => x.CreateTime).ThenBy(x => x.Sequence).ToList();
+        var messages = source.ToList();
         var issues = new List<MigrationCheckItem>();
 
         foreach (var duplicate in messages.GroupBy(x => x.LocalId).Where(x => x.Count() > 1))
