@@ -41,9 +41,8 @@ public sealed class DatabaseCredentialResolver
                     UseLegacyWeChatCipher = true,
                     ReadOnly = true
                 };
-                var tables = await _reader.ListTablesAsync(databasePath, legacy);
-                if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
-                    tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                var schema = await _reader.DetectSchemaAsync(databasePath, legacy);
+                if (schema.MessageTable is not null || schema.ConversationTable is not null)
                     return new(true, candidate.Password, 0, candidate.Source,
                         "Database opened with WeChat legacy SQLCipher profile.");
             }
@@ -63,10 +62,8 @@ public sealed class DatabaseCredentialResolver
                         ReadOnly = true
                     };
 
-                    var tables = await _reader.ListTablesAsync(databasePath, options);
-                    if (tables.Count == 0) continue;
-                    if (!tables.Contains("message", StringComparer.OrdinalIgnoreCase) &&
-                        !tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    var schema = await _reader.DetectSchemaAsync(databasePath, options);
+                    if (schema.MessageTable is null && schema.ConversationTable is null)
                         continue;
 
                     return new(true, candidate.Password, compatibility,
@@ -88,10 +85,9 @@ public sealed class DatabaseCredentialResolver
                         "derived");
                     var output = Path.Combine(derivedDir, "EnMicroMsg.sc1.decrypted.db");
                     await _sc1.DecryptWithPasswordAsync(databasePath, candidate.Password, output);
-                    var tables = await _reader.ListTablesAsync(
+                    var schema = await _reader.DetectSchemaAsync(
                         output, new DatabaseOpenOptions { ReadOnly = true });
-                    if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
-                        tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    if (schema.MessageTable is not null || schema.ConversationTable is not null)
                     {
                         return new(true, candidate.Password, 0,
                             candidate.Source + ":sc1-page",
