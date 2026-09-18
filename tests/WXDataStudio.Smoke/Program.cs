@@ -70,6 +70,13 @@ Assert(!MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer must stay 
 Assert(!MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet must stay read-only");
 Assert(MessageKindPolicy.IsEditable(MessageKind.Text), "text should be editable in workspace");
 
+Assert(LegacyWeChatKeyCandidateService.BuildLegacyKey("", "12345").Length == 7,
+    "empty-device legacy key candidate should be supported");
+var compatibleCandidates = LegacyWeChatKeyCandidateService.ExtractCompatibleInfoCandidates(
+    "noise\n867530912345678\nother 0123456789abcdef end");
+Assert(compatibleCandidates.Contains("867530912345678"), "CompatibleInfo IMEI candidate parse failed");
+Assert(compatibleCandidates.Contains("0123456789abcdef"), "CompatibleInfo hex candidate parse failed");
+
 const string transferXml = "<msg><appmsg><type>2000</type><wcpayinfo><feedesc>¥1.00</feedesc><paysubtype>1</paysubtype></wcpayinfo></appmsg></msg>";
 const string redPacketXml = "<msg><appmsg><type>2001</type><wcpayinfo><sendid>demo</sendid><feedesc>红包</feedesc></wcpayinfo></appmsg></msg>";
 Assert(MessageTypeClassifier.Classify(49, transferXml) == MessageKind.Transfer, "transfer classification mismatch");
