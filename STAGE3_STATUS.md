@@ -5,6 +5,8 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 ## Implemented
 
 - Offline snapshot catalog: automatically ignores incomplete snapshots and can select a known snapshot manually.
+- New snapshots also capture hashed local resolver-support files (WeChat auth/system prefs, CompatibleInfo.cfg, and bounded device-token probes) under `support/`; values are never printed to logs.
+- Credential diagnostics/resolution can use that support context offline, so a later USB disconnect does not force re-reading the phone.
 - Database diagnostics: main DB size/status, WAL/SHM presence, and SHA-256 manifest integrity.
 - Privacy-safe database key diagnostics: reports only whether UIN/device-token sources are available and how many bounded candidates can be tested; actual UIN/IMEI/key values are not displayed or logged.
 - Bounded UIN discovery from WeChat auth, system-config, and last-login preference files.
@@ -33,13 +35,14 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Phone write-back is not enabled.
 - Transaction-class records cannot be created or edited in a workspace.
 - Database session keys are not written to repository, snapshot manifest, or application logs.
+- Resolver support stays inside the local snapshot and is excluded from rollback ZIP packages.
 - SQLite connection pooling is disabled for immutable snapshot reads to avoid stale handles and file-lock surprises.
 
 ## Device-dependent acceptance still required
 
 These cannot be truthfully marked complete until the locked MIX 2S / WeChat 8.0.76 test phone is connected again:
 
-1. Run the bounded UIN + device-token + SC1 resolver against the real 8.0.76 `EnMicroMsg.db`.
+1. Create one fresh resolver-enabled snapshot on the locked MIX 2S, then run the bounded UIN + device-token + SC1 resolver against the real 8.0.76 `EnMicroMsg.db`.
 2. If no bounded passphrase matches, obtain a raw key through a controlled user-owned-device diagnostic path and validate it without altering the source snapshot.
 3. Load real conversations and message rows from the captured snapshot.
 4. Verify real image/video/voice/file path mapping.
