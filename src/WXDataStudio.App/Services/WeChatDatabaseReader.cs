@@ -103,12 +103,18 @@ public sealed class WeChatDatabaseReader
     {
         var rawType = Int32(r, 4);
         var content = Text(r, 8);
+        var conversationId = Text(r, 2);
+        var isOutgoing = Int32(r, 3) != 0;
+        var group = !isOutgoing && conversationId.EndsWith("@chatroom", StringComparison.OrdinalIgnoreCase)
+            ? GroupMessageParser.Parse(content)
+            : new GroupMessageEnvelope("", content);
         return new WeChatMessage
         {
             LocalId = Int64(r, 0),
             ServerId = r.IsDBNull(1) ? null : Int64(r, 1),
-            ConversationId = Text(r, 2),
-            IsOutgoing = Int32(r, 3) != 0,
+            ConversationId = conversationId,
+            Sender = group.Sender,
+            IsOutgoing = isOutgoing,
             RawType = rawType,
             RawStatus = Int32(r, 5),
             CreateTime = NormalizeUnixTime(Int64(r, 6)),
