@@ -27,7 +27,7 @@ public sealed class DatabaseCredentialResolver
 
     public async Task<DatabaseCredentialResolution> ResolveAsync(string databasePath)
     {
-        var candidates = await _candidates.BuildAsync();
+        var candidates = await _candidates.BuildAsync(Path.GetDirectoryName(databasePath));
         if (candidates.Count == 0)
             return new(false, null, 0, "none",
                 "No bounded device-derived key candidates were available.");
