@@ -145,7 +145,11 @@ await using (var bootstrap = new SqliteConnection("Data Source=:memory:;Pooling=
 {
     await bootstrap.OpenAsync();
     await using var defaultCompat = bootstrap.CreateCommand();
-    defaultCompat.CommandText = "PRAGMA cipher_default_compatibility=1;";
+    defaultCompat.CommandText = "PRAGMA cipher_default_page_size=1024;" +
+                                "PRAGMA cipher_default_kdf_iter=4000;" +
+                                "PRAGMA cipher_default_use_hmac=OFF;" +
+                                "PRAGMA cipher_default_kdf_algorithm=PBKDF2_HMAC_SHA1;" +
+                                "PRAGMA cipher_default_hmac_algorithm=HMAC_SHA1;";
     await defaultCompat.ExecuteNonQueryAsync();
 }
 await using (var connection = new SqliteConnection($"Data Source={sc1EncryptedPath};Pooling=False"))
