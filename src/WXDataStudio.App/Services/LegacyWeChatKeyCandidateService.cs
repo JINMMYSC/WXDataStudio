@@ -148,7 +148,7 @@ public sealed class LegacyWeChatKeyCandidateService
         return Array.Empty<(string Source, string Value)>();
     }
 
-    internal static IReadOnlyList<string> ExtractCompatibleInfoCandidates(string text)
+    public static IReadOnlyList<string> ExtractCompatibleInfoCandidates(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return Array.Empty<string>();
         var values = new List<string>();
