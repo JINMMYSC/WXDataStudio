@@ -4,11 +4,13 @@ using WXDataStudio.App.Models;
 
 namespace WXDataStudio.App.Services;
 
-public static partial class MessageMetadataParser
+public static class MessageMetadataParser
 {
     public static MessageMetadata Parse(MessageKind kind, string? content)
     {
         var text = content ?? "";
+        var refer = Section(text, "refermsg");
+        var weapp = Section(text, "weappinfo");
         return new MessageMetadata
         {
             Title = Tag(text, "title"),
@@ -20,10 +22,16 @@ public static partial class MessageMetadataParser
             Longitude = First(text, "y", "longitude"),
             FileExtension = Tag(text, "fileext"),
             FileSize = First(text, "totallen", "filesize"),
+            QuoteSender = First(refer, "displayname", "fromusr", "chatusr"),
+            QuoteContent = First(refer, "content", "refercontent", "msgsource"),
+            MiniProgramUserName = First(weapp, "username", "weappusername"),
+            MiniProgramPath = First(weapp, "pagepath", "path"),
+            ContactUserName = kind == MessageKind.ContactCard ? First(text, "username", "encryptusername") : "",
+            ContactNickName = kind == MessageKind.ContactCard ? First(text, "nickname", "fullpy") : "",
             TransactionType = MessageKindPolicy.IsSensitive(kind) ? kind.ToString() : "",
             TransactionAmount = First(text, "feedesc", "fee", "amount"),
-            TransactionStatus = First(text, "pay_memo", "receiver_name", "paysubtype"),
-            TransactionMemo = First(text, "pay_memo", "remark", "payinfo")
+            TransactionStatus = First(text, "pay_memo", "receiver_name", "paysubtype", "state"),
+            TransactionMemo = First(text, "pay_memo", "remark", "payinfo", "desc")
         };
     }
 
@@ -35,6 +43,15 @@ public static partial class MessageMetadataParser
             if (!string.IsNullOrWhiteSpace(value)) return value;
         }
         return "";
+    }
+
+    private static string Section(string text, string name)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var escaped = Regex.Escape(name);
+        var match = Regex.Match(text, $@"<{escaped}[^>]*>(?<v>.*?)</{escaped}>",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return match.Success ? match.Groups["v"].Value : "";
     }
 
     private static string Tag(string text, string name)
