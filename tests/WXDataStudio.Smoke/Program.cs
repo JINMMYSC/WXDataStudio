@@ -47,6 +47,17 @@ Assert(messages[1].Kind == MessageKind.Image, "image classification mismatch");
 Assert(messages[2].Kind == MessageKind.Link, "link classification mismatch");
 Assert(conversations[0].LastTime == 1726500000, "conversation timestamp normalization mismatch");
 Assert(!string.IsNullOrWhiteSpace(conversations[0].LastDisplayTime), "conversation display time missing");
+var invalidTimeMessage = new WeChatMessage
+{
+    LocalId = 404,
+    ConversationId = "alice",
+    CreateTime = long.MaxValue,
+    Kind = MessageKind.Text,
+    Content = "bad time"
+};
+Assert(invalidTimeMessage.DisplayTime == "", "invalid message timestamp should not crash rendering");
+Assert(WorkspaceMessage.From(invalidTimeMessage).DisplayTime == "",
+    "invalid workspace timestamp should not crash rendering");
 
 var altDbPath = Path.Combine(root, "alternate-schema.db");
 await using (var connection = new SqliteConnection($"Data Source={altDbPath}"))
