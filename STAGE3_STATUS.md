@@ -14,7 +14,9 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Legacy WeChat passphrase candidates including `MD5(device token + UIN)[:7]`, signed/unsigned UIN variants, and an empty-device fallback.
 - Read-only SQLCipher compatibility probing plus a deterministic SQLCipher1-style page decrypt fallback (1024-byte pages / PBKDF2-HMAC-SHA1 / 4000 iterations / no HMAC) that writes only a derived plaintext copy.
 - Manual session passphrase and raw 32-byte AES-key fallback; key material stays in process memory and is never written to application logs.
-- Conversation search and message-type filtering.
+- Conversation search, current-conversation message keyword search, and message-type filtering.
+- Dynamic schema detection: exact WeChat table names are preferred, with column-based message/contact detection and a conversation-list fallback built from message rows when rconversation is unavailable.
+- Conversation/message timestamp normalization and rendering guards prevent malformed or millisecond timestamps from crashing the UI.
 - Group-chat sender extraction for incoming chatroom messages.
 - Message parsing for text, image, voice, video, emoji, location, file, links, mini programs, contact cards, quotes, system/call records, transfer, red packet, and payment classes.
 - Extended quote / mini-program / contact-card metadata fields in the UI.
@@ -25,6 +27,7 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Workspace edit/revert/audit/diff support, including newly created local messages.
 - Timeline validation.
 - Migration-readiness checks with JSON and text report export.
+- A one-click Stage 3 read-only acceptance action creates a fresh resolver-enabled snapshot, verifies integrity/database opening/schema mapping, requires real conversations plus sample text messages, and writes a privacy-safe acceptance report.
 - Verified rollback ZIP generation from an intact snapshot.
 - CI smoke coverage for parsers, SQLCipher profiles, SC1 passphrase/raw-key page decryption, workspace editing/media, snapshot catalog, timeline/readiness, rollback packaging, and report export.
 
