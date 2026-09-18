@@ -50,6 +50,38 @@ var meta = MessageMetadataParser.Parse(messages[2].Kind, messages[2].Content);
 Assert(meta.Title == "OpenAI", "card title parse mismatch");
 Assert(meta.Url == "https://openai.com", "card url parse mismatch");
 
+var groupEnvelope = GroupMessageParser.Parse("wxid_member_1:\nhello group");
+Assert(groupEnvelope.Sender == "wxid_member_1", "group sender parse mismatch");
+Assert(groupEnvelope.Body == "hello group", "group body parse mismatch");
+
+const string quoteXml = "<msg><appmsg><type>57</type><refermsg><displayname>Bob</displayname><content><![CDATA[quoted hello]]></content></refermsg></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(49, quoteXml) == MessageKind.Quote, "quote classification mismatch");
+var quoteMeta = MessageMetadataParser.Parse(MessageKind.Quote, quoteXml);
+Assert(quoteMeta.QuoteSender == "Bob", "quote sender parse mismatch");
+Assert(quoteMeta.QuoteContent == "quoted hello", "quote content parse mismatch");
+
+const string miniXml = "<msg><appmsg><type>33</type><weappinfo><username>gh_demo@app</username><pagepath>pages/home</pagepath></weappinfo></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(49, miniXml) == MessageKind.MiniProgram, "mini program classification mismatch");
+var miniMeta = MessageMetadataParser.Parse(MessageKind.MiniProgram, miniXml);
+Assert(miniMeta.MiniProgramUserName == "gh_demo@app", "mini program username parse mismatch");
+Assert(miniMeta.MiniProgramPath == "pages/home", "mini program path parse mismatch");
+
+Assert(!MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer must stay read-only");
+Assert(!MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet must stay read-only");
+Assert(MessageKindPolicy.IsEditable(MessageKind.Text), "text should be editable in workspace");
+
+var readinessDir = Path.Combine(root, "readiness");
+Directory.CreateDirectory(readinessDir);
+await File.WriteAllBytesAsync(Path.Combine(readinessDir, "EnMicroMsg.db"), new byte[] { 1 });
+await File.WriteAllBytesAsync(Path.Combine(readinessDir, "EnMicroMsg.db-wal"), new byte[] { 1 });
+await File.WriteAllBytesAsync(Path.Combine(readinessDir, "EnMicroMsg.db-shm"), new byte[] { 1 });
+var readiness = new MigrationReadinessService().Evaluate(readinessDir, conversations, messages, Array.Empty<string>());
+Assert(!readiness.IsBlocked, "readiness unexpectedly blocked");
+Assert(readiness.Status == "Ready", "readiness status mismatch");
+var reportFiles = await new MigrationReportExporter().ExportAsync(readiness, Path.Combine(root, "reports"));
+Assert(File.Exists(reportFiles.JsonPath), "readiness JSON report missing");
+Assert(File.Exists(reportFiles.TextPath), "readiness text report missing");
+
 var legacyDbPath = Path.Combine(root, "legacy-encrypted.db");
 await using (var connection = new SqliteConnection($"Data Source={legacyDbPath}"))
 {
