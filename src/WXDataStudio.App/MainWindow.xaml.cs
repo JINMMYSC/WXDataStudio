@@ -509,18 +509,25 @@ public partial class MainWindow : Window
                 throw new InvalidDataException("数据库已打开，但没有读取到会话记录。");
 
             var sampleMessages = 0;
-            foreach (var conversation in conversations.Take(3))
+            var sampleTextMessages = 0;
+            foreach (var conversation in conversations.Take(5))
             {
                 try
                 {
-                    sampleMessages += (await _dbReader.LoadMessagesAsync(
-                        activeDb, conversation.Username, options, 50)).Count;
+                    var sample = await _dbReader.LoadMessagesAsync(
+                        activeDb, conversation.Username, options, 50);
+                    sampleMessages += sample.Count;
+                    sampleTextMessages += sample.Count(x => x.Kind == MessageKind.Text);
                 }
                 catch
                 {
                     // One unusual conversation should not hide overall adapter acceptance.
                 }
             }
+            if (sampleMessages == 0)
+                throw new InvalidDataException("已读取会话，但抽样会话中没有成功读取到任何消息。");
+            if (sampleTextMessages == 0)
+                throw new InvalidDataException("已读取消息，但抽样中没有识别到文字消息，阶段三验收不能通过。");
 
             _currentConversations = conversations;
             ConversationList.ItemsSource = conversations;
@@ -548,12 +555,13 @@ public partial class MainWindow : Window
                 $"Conversation table: {schema.ConversationTable ?? "(message fallback)"}\n" +
                 $"Contact table: {schema.ContactTable ?? "(none)"}\n" +
                 $"Conversations: {conversations.Count}\n" +
-                $"Sample messages (first 3 conversations, max 50 each): {sampleMessages}\n" +
+                $"Sample messages (first 5 conversations, max 50 each): {sampleMessages}\n" +
+                $"Sample text messages: {sampleTextMessages}\n" +
                 "Phone write-back: DISABLED\n";
             await File.WriteAllTextAsync(reportPath, report);
             AddLog($"Stage3 acceptance passed: conversations={conversations.Count}; sampleMessages={sampleMessages}.");
             MessageBox.Show(
-                $"阶段三只读验收通过。\n\n会话：{conversations.Count}\n抽样消息：{sampleMessages}\n\n报告：\n{reportPath}",
+                $"阶段三只读验收通过。\n\n会话：{conversations.Count}\n抽样消息：{sampleMessages}\n抽样文字：{sampleTextMessages}\n\n报告：\n{reportPath}",
                 "阶段三验收通过", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
