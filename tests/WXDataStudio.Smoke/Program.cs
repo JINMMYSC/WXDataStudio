@@ -109,6 +109,28 @@ Assert(rawTables.Contains("rawtest"), "raw hex SQLCipher open failed");
 
 var workspaceService = new WorkspaceService();
 var workspace = workspaceService.Create(root, conversations[0], messages);
+var addedText = workspaceService.AddMessage(workspace, MessageKind.Text, "new local text");
+Assert(addedText.IsNew && addedText.CanEdit, "new workspace text message mismatch");
+
+var mediaSource = Path.Combine(root, "sample-media.png");
+await File.WriteAllBytesAsync(mediaSource, new byte[] { 1, 2, 3, 4 });
+var importedMedia = await new WorkspaceMediaService(Path.Combine(root, "workspace-media"))
+    .ImportAsync(workspace, mediaSource);
+Assert(File.Exists(importedMedia), "workspace media import failed");
+var addedImage = workspaceService.AddMessage(workspace, MessageKind.Image, "[image]", importedMedia);
+Assert(addedImage.Attachment == importedMedia, "workspace image attachment mismatch");
+
+var sensitiveCreateBlocked = false;
+try
+{
+    workspaceService.AddMessage(workspace, MessageKind.Transfer, "not allowed");
+}
+catch (InvalidOperationException)
+{
+    sensitiveCreateBlocked = true;
+}
+Assert(sensitiveCreateBlocked, "sensitive workspace message creation must be blocked");
+
 workspaceService.EditContent(workspace, 1, "edited hello");
 workspaceService.EditTime(workspace, 1, messages[0].CreateTime + 60);
 Assert(workspace.Audit.Count == 2, "workspace audit mismatch");
@@ -116,6 +138,26 @@ Assert(workspace.Audit.Count == 2, "workspace audit mismatch");
 var diffService = new WorkspaceDiffService();
 var diffs = diffService.GetDiffs(workspace);
 Assert(diffs.Count >= 2, "workspace diff mismatch");
+
+var catalogRoot = Path.Combine(root, "snapshots");
+var incompleteDir = Path.Combine(catalogRoot, "20260101-000000");
+var usableDir = Path.Combine(catalogRoot, "20260102-000000");
+Directory.CreateDirectory(incompleteDir);
+Directory.CreateDirectory(usableDir);
+await File.WriteAllBytesAsync(Path.Combine(usableDir, "EnMicroMsg.db"), new byte[] { 1, 2, 3 });
+var catalogManifest = new SnapshotManifest
+{
+    CreatedAt = new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero),
+    Device = new DeviceInfo(),
+    Files = new[] { new SnapshotFile("EnMicroMsg.db", 3, "catalog-test") }
+};
+await File.WriteAllTextAsync(Path.Combine(usableDir, "manifest.json"),
+    System.Text.Json.JsonSerializer.Serialize(catalogManifest));
+var catalog = new SnapshotCatalogService(catalogRoot);
+var latestSnapshot = await catalog.FindLatestUsableAsync();
+Assert(latestSnapshot is not null, "snapshot catalog did not find usable snapshot");
+Assert(latestSnapshot!.DirectoryPath == usableDir, "snapshot catalog selected wrong directory");
+Assert(latestSnapshot.DatabaseSize == 3, "snapshot catalog size mismatch");
 
 var workspacePath = await workspaceService.SaveAsync(workspace, root);
 var loaded = await workspaceService.LoadAsync(workspacePath);
