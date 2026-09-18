@@ -159,6 +159,25 @@ Assert(latestSnapshot is not null, "snapshot catalog did not find usable snapsho
 Assert(latestSnapshot!.DirectoryPath == usableDir, "snapshot catalog selected wrong directory");
 Assert(latestSnapshot.DatabaseSize == 3, "snapshot catalog size mismatch");
 
+var rollbackDir = Path.Combine(root, "rollback-source");
+Directory.CreateDirectory(rollbackDir);
+var rollbackBytes = new byte[] { 10, 20, 30, 40 };
+await File.WriteAllBytesAsync(Path.Combine(rollbackDir, "EnMicroMsg.db"), rollbackBytes);
+var rollbackHash = Convert.ToHexString(
+    System.Security.Cryptography.SHA256.HashData(rollbackBytes)).ToLowerInvariant();
+var rollbackManifest = new SnapshotManifest
+{
+    CreatedAt = DateTimeOffset.Now,
+    Device = new DeviceInfo(),
+    Files = new[] { new SnapshotFile("EnMicroMsg.db", rollbackBytes.Length, rollbackHash) }
+};
+await File.WriteAllTextAsync(Path.Combine(rollbackDir, "manifest.json"),
+    System.Text.Json.JsonSerializer.Serialize(rollbackManifest));
+var rollback = await new RollbackPackageService().CreateAsync(
+    rollbackDir, Path.Combine(root, "rollback-output"));
+Assert(File.Exists(rollback.PackagePath), "rollback package missing");
+Assert(rollback.Size > 0 && rollback.Sha256.Length == 64, "rollback package metadata mismatch");
+
 var workspacePath = await workspaceService.SaveAsync(workspace, root);
 var loaded = await workspaceService.LoadAsync(workspacePath);
 Assert(loaded.Messages.Single(x => x.LocalId == 1).Content == "edited hello", "workspace persistence mismatch");
