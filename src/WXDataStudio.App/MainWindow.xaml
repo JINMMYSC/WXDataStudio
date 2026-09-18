@@ -61,7 +61,7 @@
                             <TextBlock x:Name="ConversationTitle" Text="请选择会话" FontWeight="SemiBold" FontSize="17"/>
                             <TextBlock Text="时间线预览；原始快照只读，编辑只发生在工作副本" Foreground="#6A737D" FontSize="12" Margin="0,3,0,0"/>
                         </StackPanel>
-                        <ComboBox Grid.Column="1" Width="150" SelectedIndex="0">
+                        <ComboBox Grid.Column="1" Width="150" SelectedIndex="0" x:Name="MessageFilter" SelectionChanged="OnMessageFilterChanged">
                             <ComboBoxItem Content="全部消息"/><ComboBoxItem Content="文字"/>
                             <ComboBoxItem Content="图片/媒体"/><ComboBoxItem Content="卡片/位置"/>
                             <ComboBoxItem Content="系统消息"/><ComboBoxItem Content="交易类（只读）"/>
@@ -119,13 +119,13 @@
                             <TextBlock Text="尺寸 / 分辨率"/><TextBox x:Name="MediaDimensions" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="大小"/><TextBox x:Name="MediaSize" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="时长"/><TextBox x:Name="MediaDuration" IsReadOnly="True" Margin="0,2,0,8"/>
-                            <WrapPanel><Button Content="选择图片/文件" Padding="10,5" IsEnabled="False"/><Button Content="预览" Padding="10,5" Margin="6,0,0,0" IsEnabled="False"/></WrapPanel>
+                            <WrapPanel><Button x:Name="ReplaceMediaButton" Content="选择图片/文件" Padding="10,5" IsEnabled="False" Click="OnReplaceMedia"/><Button x:Name="PreviewMediaButton" Content="预览" Padding="10,5" Margin="6,0,0,0" IsEnabled="False" Click="OnPreviewMedia"/></WrapPanel>
                         </StackPanel></ScrollViewer></TabItem>                        <TabItem Header="日期"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
                             <TextBlock Text="原始时间"/><TextBox x:Name="PropertyTime" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="显示时间"/><TextBox x:Name="DateDisplay" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="排序时间 / sequence"/><TextBox x:Name="DateSort" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="时区"/><TextBox x:Name="DateTimezone" IsReadOnly="True" Margin="0,2,0,8"/>
-                            <WrapPanel><Button Content="批量顺延" Padding="10,5" IsEnabled="False"/><Button Content="校验时间线" Padding="10,5" Margin="6,0,0,0" IsEnabled="False"/></WrapPanel>
+                            <WrapPanel><Button Content="批量顺延" Padding="10,5" IsEnabled="False"/><Button x:Name="ValidateTimelineButton" Content="校验时间线" Padding="10,5" Margin="6,0,0,0" IsEnabled="False" Click="OnValidateTimeline"/></WrapPanel>
                         </StackPanel></ScrollViewer></TabItem>
 
                         <TabItem Header="位置/卡片"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
