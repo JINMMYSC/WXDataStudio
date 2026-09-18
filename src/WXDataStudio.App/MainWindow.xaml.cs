@@ -620,7 +620,8 @@ public partial class MainWindow : Window
 
     private async void OnReplaceMedia(object sender, RoutedEventArgs e)
     {
-        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg || !msg.CanEdit)
+        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg ||
+            !msg.CanEdit || !MessageKindPolicy.HasExternalMedia(msg.Kind))
             return;
         var dialog = new OpenFileDialog { Filter = "所有文件|*.*", Multiselect = false };
         if (dialog.ShowDialog(this) != true) return;
@@ -713,11 +714,16 @@ public partial class MainWindow : Window
         if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg) return;
         var wasNew = msg.IsNew;
         _workspaceService.Revert(_workspace, msg.LocalId);
-        MessageList.Items.Refresh();
         if (wasNew)
+        {
+            ApplyMessageFilter();
             MessageList.SelectedItem = null;
+        }
         else
+        {
+            MessageList.Items.Refresh();
             FillEditor(msg);
+        }
         AddLog($"Workspace message reverted: {msg.LocalId}");
     }
 
