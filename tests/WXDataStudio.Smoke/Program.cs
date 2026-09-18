@@ -82,6 +82,25 @@ Assert(uinCandidates.Count == 2, "UIN candidate deduplication mismatch");
 Assert(uinCandidates.Contains("123456"), "default_uin parse failed");
 Assert(uinCandidates.Contains("-987654"), "last_login_uin parse failed");
 
+var offlineResolverSnapshot = Path.Combine(root, "offline-resolver-snapshot");
+var offlineSupport = Path.Combine(offlineResolverSnapshot, "support");
+Directory.CreateDirectory(offlineSupport);
+await File.WriteAllTextAsync(Path.Combine(offlineSupport, "auth_info_key_prefs.xml"),
+    "<map><int name=\"_auth_uin\" value=\"123456\"/></map>");
+await File.WriteAllTextAsync(Path.Combine(offlineSupport, "device_tokens.json"),
+    "{\"persist.radio.imei\":\"867530912345678\"}");
+var offlineCandidatesService = new LegacyWeChatKeyCandidateService(
+    new AdbService(Path.Combine(root, "missing-adb.exe")));
+var offlineCandidates = await offlineCandidatesService.BuildAsync(offlineResolverSnapshot);
+var expectedOfflineKey = LegacyWeChatKeyCandidateService.BuildLegacyKey(
+    "867530912345678", "123456");
+Assert(offlineCandidates.Any(x => x.Password == expectedOfflineKey),
+    "offline snapshot resolver did not build expected device+uin key");
+var offlineDiagnostics = await offlineCandidatesService.DiagnoseAsync(offlineResolverSnapshot);
+Assert(offlineDiagnostics.UinFound, "offline snapshot UIN diagnostics failed");
+Assert(offlineDiagnostics.TokenSources.Any(x => x.Contains("snapshot:", StringComparison.Ordinal)),
+    "offline snapshot token source diagnostics failed");
+
 const string transferXml = "<msg><appmsg><type>2000</type><wcpayinfo><feedesc>¥1.00</feedesc><paysubtype>1</paysubtype></wcpayinfo></appmsg></msg>";
 const string redPacketXml = "<msg><appmsg><type>2001</type><wcpayinfo><sendid>demo</sendid><feedesc>红包</feedesc></wcpayinfo></appmsg></msg>";
 Assert(MessageTypeClassifier.Classify(49, transferXml) == MessageKind.Transfer, "transfer classification mismatch");
