@@ -266,9 +266,8 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    var tables = await _dbReader.ListTablesAsync(db, profile);
-                    if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
-                        tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    var schema = await _dbReader.DetectSchemaAsync(db, profile);
+                    if (schema.MessageTable is not null || schema.ConversationTable is not null)
                     {
                         AddLog($"Manual session key opened database read-only; profile={(profile.UseLegacyWeChatCipher ? "wechat-legacy" : "compat-" + profile.CipherCompatibility)}.");
                         return profile;
@@ -291,10 +290,9 @@ public partial class MainWindow : Window
                     else
                         await _sc1Decrypt.DecryptWithPasswordAsync(db, _manualDatabaseKey, derived);
 
-                    var tables = await _dbReader.ListTablesAsync(
+                    var schema = await _dbReader.DetectSchemaAsync(
                         derived, new DatabaseOpenOptions { ReadOnly = true });
-                    if (tables.Contains("message", StringComparer.OrdinalIgnoreCase) ||
-                        tables.Contains("rconversation", StringComparer.OrdinalIgnoreCase))
+                    if (schema.MessageTable is not null || schema.ConversationTable is not null)
                     {
                         _currentDbPath = derived;
                         _credential = new DatabaseCredentialResolution(
@@ -363,6 +361,8 @@ public partial class MainWindow : Window
             }
             _currentDbOptions = options;
             var activeDb = _currentDbPath ?? db;
+            var schema = await _dbReader.DetectSchemaAsync(activeDb, options);
+            AddLog($"Schema: message={schema.MessageTable ?? "(none)"}; conversation={schema.ConversationTable ?? "(fallback)"}; contact={schema.ContactTable ?? "(none)"}.");
             var conversations = await _dbReader.LoadConversationsAsync(activeDb, options);
             _currentConversations = conversations;
             ConversationList.ItemsSource = conversations;
