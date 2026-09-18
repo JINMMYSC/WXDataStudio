@@ -20,7 +20,7 @@ public sealed class WorkspaceMessage
     public string? Attachment { get; set; }
     public bool IsDirty => Content != OriginalContent || CreateTime != OriginalCreateTime ||
                            !string.Equals(Attachment, OriginalAttachment, StringComparison.Ordinal);
-    public bool CanEdit => !Sensitive;
+    public bool CanEdit => MessageKindPolicy.IsEditable(Kind);
     public string DisplayTime => DateTimeOffset.FromUnixTimeSeconds(CreateTime)
         .LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
     public string Direction => IsOutgoing ? "我发送" : "对方发送";
