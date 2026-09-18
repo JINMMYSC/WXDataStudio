@@ -67,16 +67,16 @@
                             <ComboBoxItem Content="系统消息"/><ComboBoxItem Content="交易类（只读）"/>
                         </ComboBox>
                         <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,10,0,0">
-                            <Button Content="+ 文字" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddTextButton"/>
-                            <Button Content="+ 图片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddImageButton"/>
-                            <Button Content="+ 视频" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVideoButton"/>
-                            <Button Content="+ 语音" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVoiceButton"/>
-                            <Button Content="+ 文件" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddFileButton"/>
-                            <Button Content="+ 位置/卡片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddCardButton"/>
-                            <Button Content="+ 表情" Padding="10,5" Margin="0,0,6,0" IsEnabled="False"/>
-                            <Button Content="+ 名片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False"/>
-                            <Button Content="+ 链接/小程序" Padding="10,5" Margin="0,0,6,0" IsEnabled="False"/>
-                            <Button Content="+ 引用" Padding="10,5" IsEnabled="False"/>
+                            <Button Content="+ 文字" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddTextButton" Click="OnAddText"/>
+                            <Button Content="+ 图片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddImageButton" Click="OnAddImage"/>
+                            <Button Content="+ 视频" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVideoButton" Click="OnAddVideo"/>
+                            <Button Content="+ 语音" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVoiceButton" Click="OnAddVoice"/>
+                            <Button Content="+ 文件" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddFileButton" Click="OnAddFile"/>
+                            <Button Content="+ 位置/卡片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddCardButton" Click="OnAddCard"/>
+                            <Button Content="+ 表情" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddEmojiButton" Click="OnAddEmoji"/>
+                            <Button Content="+ 名片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddContactButton" Click="OnAddContact"/>
+                            <Button Content="+ 链接/小程序" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddLinkButton" Click="OnAddLink"/>
+                            <Button Content="+ 引用" Padding="10,5" IsEnabled="False" x:Name="AddQuoteButton" Click="OnAddQuote"/>
                         </WrapPanel>
                     </Grid>
                     <ListBox x:Name="MessageList" SelectionChanged="OnMessageSelected"/>
