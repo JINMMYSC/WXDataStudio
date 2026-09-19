@@ -11,6 +11,12 @@ public sealed class MessageMetadata
     public string Longitude { get; init; } = "";
     public string FileExtension { get; init; } = "";
     public string FileSize { get; init; } = "";
+    public string QuoteSender { get; init; } = "";
+    public string QuoteContent { get; init; } = "";
+    public string MiniProgramUserName { get; init; } = "";
+    public string MiniProgramPath { get; init; } = "";
+    public string ContactUserName { get; init; } = "";
+    public string ContactNickName { get; init; } = "";
     public string TransactionType { get; init; } = "";
     public string TransactionAmount { get; init; } = "";
     public string TransactionStatus { get; init; } = "";

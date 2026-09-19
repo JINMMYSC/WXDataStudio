@@ -9,6 +9,16 @@ public sealed class WorkspaceDiffService
         var diffs = new List<WorkspaceDiff>();
         foreach (var m in workspace.Messages)
         {
+            if (m.IsNew)
+            {
+                diffs.Add(new WorkspaceDiff(m.LocalId, m.Kind, "新增", "", m.Content));
+                continue;
+            }
+            if (m.IsDeleted)
+            {
+                diffs.Add(new WorkspaceDiff(m.LocalId, m.Kind, "删除", m.Content, ""));
+                continue;
+            }
             if (m.Content != m.OriginalContent)
                 diffs.Add(new WorkspaceDiff(m.LocalId, m.Kind, "内容", m.OriginalContent, m.Content));
             if (m.CreateTime != m.OriginalCreateTime)

@@ -7,7 +7,9 @@ public static class MessageTypeClassifier
     public static MessageKind Classify(int type, string? content)
     {
         var text = content ?? "";
-        return type switch
+        var normalizedType = type & 0xffff;
+        if (normalizedType == 0) normalizedType = type;
+        return normalizedType switch
         {
             1 => MessageKind.Text,
             3 => MessageKind.Image,
@@ -18,7 +20,7 @@ public static class MessageTypeClassifier
             50 => MessageKind.Call,
             10000 or 10002 => MessageKind.System,
             49 => ClassifyAppMessage(text),
-            _ => ClassifyByContent(type, text)
+            _ => ClassifyByContent(normalizedType, text)
         };
     }
 
@@ -27,9 +29,9 @@ public static class MessageTypeClassifier
         var subtype = ReadIntTag(content, "type");
         return subtype switch
         {
-            5 => MessageKind.Link,
+            5 or 51 or 62 => MessageKind.Link,
             6 => MessageKind.File,
-            19 => MessageKind.Quote,
+            19 or 57 => MessageKind.Quote,
             33 or 36 => MessageKind.MiniProgram,
             2000 => MessageKind.Transfer,
             2001 => MessageKind.RedPacket,
@@ -67,4 +69,10 @@ public static class MessageTypeClassifier
         if (end <= start) return 0;
         return int.TryParse(xml[start..end].Trim(), out var value) ? value : 0;
     }
+
+    /// <summary>
+    /// Returns the numeric appmsg sub-type for a type-49 message, or 0 when the
+    /// payload carries no explicit sub-type.
+    /// </summary>
+    public static int ReadAppMessageSubtype(string? content) => ReadIntTag(content ?? "", "type");
 }

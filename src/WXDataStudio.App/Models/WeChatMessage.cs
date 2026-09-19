@@ -16,10 +16,17 @@ public sealed class WeChatMessage
     public string? Reserved { get; init; }
     public string? LvBufferHex { get; init; }
     public MessageKind Kind { get; init; }
-    public string DisplayTime => DateTimeOffset.FromUnixTimeSeconds(CreateTime).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
-    public bool Sensitive => MessageKindPolicy.IsSensitive(Kind);
+    public string DisplayTime => SafeFormatTime(CreateTime);
+    /// <summary>Transaction-class record: labelled in the UI, still editable.</summary>
+    public bool IsTransaction => MessageKindPolicy.IsTransaction(Kind);
     public string Direction => IsOutgoing ? "我发送" : "对方发送";
     public string StatusText => RawStatus.ToString();
     public override string ToString() => $"[{DisplayTime}] {Direction} · {Kind} · {Preview(Content)}";
     private static string Preview(string s) => s.Length <= 70 ? s : s[..70] + "…";
+    private static string SafeFormatTime(long unix)
+    {
+        if (unix <= 0) return "";
+        try { return DateTimeOffset.FromUnixTimeSeconds(unix).LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss"); }
+        catch (ArgumentOutOfRangeException) { return ""; }
+    }
 }

@@ -8,6 +8,9 @@
     <AssemblyName>WXDataStudio</AssemblyName>
     <RootNamespace>WXDataStudio.App</RootNamespace>
     <ApplicationIcon />
+    <Version>0.3.0</Version>
+    <FileVersion>0.3.0.0</FileVersion>
+    <InformationalVersion>0.3.0-stage3</InformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="8.0.11" />
