@@ -58,7 +58,10 @@ public static class MoneyMessageDialog
         panel.Children.Add(noteBox);
 
         var statusBox = new TextBox { Text = status, Margin = new Thickness(0, 2, 0, 10) };
-        panel.Children.Add(new TextBlock { Text = "状态（可留空。已收钱 / 已退还 之类）" });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "聊天里显示的状态文字（可留空。例如 已收款 / 已退还 / 待确认收款）"
+        });
         panel.Children.Add(statusBox);
 
         MoneyMessageInput? result = null;

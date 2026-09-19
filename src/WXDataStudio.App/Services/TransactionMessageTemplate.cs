@@ -23,10 +23,12 @@ public static class TransactionMessageTemplate
             _ => 1
         };
         var title = E(string.IsNullOrWhiteSpace(note) ? DefaultTitle(kind) : note);
+        // WeChat renders the bubble's status line from <des>.
+        var statusText = E(string.IsNullOrWhiteSpace(status) ? title : status);
         return "<msg><appmsg>" +
                $"<type>{appType}</type>" +
                $"<title>{title}</title>" +
-               $"<des>{title}</des>" +
+               $"<des>{statusText}</des>" +
                "<wcpayinfo>" +
                $"<feedesc>{E(string.IsNullOrWhiteSpace(amount) ? "¥0.00" : amount)}</feedesc>" +
                $"<pay_memo>{E(note)}</pay_memo>" +
@@ -41,10 +43,72 @@ public static class TransactionMessageTemplate
         var amount = Tag(text, "feedesc");
         var note = Tag(text, "pay_memo");
         if (note.Length == 0) note = Tag(text, "title");
-        var status = Tag(text, "state");
+        // The bubble shows the status from des/senderdes/receiverdes.
+        var status = Tag(text, "des");
+        if (status.Length == 0) status = Tag(text, "senderdes");
+        if (status.Length == 0) status = Tag(text, "receiverdes");
+        if (status.Length == 0) status = Tag(text, "state");
         if (status.Length == 0) status = Tag(text, "receiver_name");
         return (amount, note, status);
     }
+
+    /// <summary>
+    /// Edits an existing transfer / red-packet record in place: only the amount,
+    /// the note and the status text change, so transaction ids, usernames and
+    /// every other field WeChat needs stay exactly as they were. Rebuilding the
+    /// payload from scratch stripped those ids and made WeChat fail to open the
+    /// transfer detail.
+    /// </summary>
+    public static string Update(
+        string? originalContent, MessageKind kind, string amount, string note, string status)
+    {
+        var text = originalContent ?? "";
+        if (text.Length == 0 || !text.Contains("<wcpayinfo", StringComparison.OrdinalIgnoreCase))
+            return Build(kind, amount, note, status);
+
+        var updated = text;
+        if (!string.IsNullOrWhiteSpace(amount))
+        {
+            updated = HasTag(updated, "feedesc")
+                ? SetTag(updated, "feedesc", amount)
+                : InsertInside(updated, "wcpayinfo", "feedesc", amount);
+        }
+        if (!string.IsNullOrWhiteSpace(note)) updated = SetTag(updated, "pay_memo", note);
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            var replaced = false;
+            foreach (var tag in new[] { "des", "senderdes", "receiverdes", "state" })
+            {
+                if (!HasTag(updated, tag)) continue;
+                updated = SetTag(updated, tag, status);
+                replaced = true;
+            }
+            if (!replaced)
+                updated = InsertInside(updated, "wcpayinfo", "des", status);
+        }
+        return updated;
+    }
+
+    private static bool HasTag(string xml, string name) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            xml, $"<{name}[ >]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static string SetTag(string xml, string name, string value) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            xml,
+            $"(<{name}[^>]*>)(.*?)(</{name}>)",
+            match => match.Groups[1].Value + E(value) + match.Groups[3].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    private static string InsertInside(string xml, string parent, string name, string value) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            xml,
+            $"(<{parent}[^>]*>)(.*?)(</{parent}>)",
+            match => match.Groups[1].Value + $"<{name}>{E(value)}</{name}>" +
+                     match.Groups[2].Value + match.Groups[3].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+            System.Text.RegularExpressions.RegexOptions.Singleline);
 
     private static string Tag(string text, string name)
     {
@@ -64,5 +128,14 @@ public static class TransactionMessageTemplate
         _ => "转账"
     };
 
-    private static string E(string value) => WebUtility.HtmlEncode(value ?? "");
+    /// <summary>
+    /// XML-escapes only the characters that must be escaped, so a currency sign
+    /// such as ¥ stays readable in the message WeChat stores and renders.
+    /// </summary>
+    private static string E(string value) => (value ?? "")
+        .Replace("&", "&amp;", StringComparison.Ordinal)
+        .Replace("<", "&lt;", StringComparison.Ordinal)
+        .Replace(">", "&gt;", StringComparison.Ordinal)
+        .Replace("\"", "&quot;", StringComparison.Ordinal)
+        .Replace("'", "&apos;", StringComparison.Ordinal);
 }

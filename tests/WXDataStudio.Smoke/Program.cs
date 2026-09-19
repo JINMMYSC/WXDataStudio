@@ -670,6 +670,32 @@ Assert(MessageTypeClassifier.Classify(49, packetXml) == MessageKind.RedPacket,
 Assert(TransactionMessageTemplate.Read(MessageKind.RedPacket, packetXml).Amount == "¥200.00",
     "red packet amount round trip mismatch");
 
+// Editing a real transfer must only touch the fields the user changed: the
+// transaction ids have to survive or WeChat cannot open the transfer detail.
+const string realTransferXml =
+    "<msg><appmsg><type>2000</type><title>转账</title><des>已收款</des>" +
+    "<wcpayinfo><pay_memo>房租</pay_memo><feedesc>¥1,000.00</feedesc>" +
+    "<transcationid>1000012345</transcationid><transferid>1000023456</transferid>" +
+    "<paymsgid>pay_abc</paymsgid><payer_username>wxid_payer</payer_username>" +
+    "<receiver_username>wxid_me</receiver_username><paysubtype>2</paysubtype>" +
+    "</wcpayinfo></appmsg></msg>";
+var editedTransfer = TransactionMessageTemplate.Update(
+    realTransferXml, MessageKind.Transfer, "¥2,000.00", "房租预付款", "已收款");
+Assert(editedTransfer.Contains("<feedesc>¥2,000.00</feedesc>"), "edited amount was not applied");
+Assert(editedTransfer.Contains("<pay_memo>房租预付款</pay_memo>"), "edited note was not applied");
+Assert(editedTransfer.Contains("<transcationid>1000012345</transcationid>"),
+    "in-place edit must keep the transaction id");
+Assert(editedTransfer.Contains("<transferid>1000023456</transferid>"),
+    "in-place edit must keep the transfer id");
+Assert(editedTransfer.Contains("<paymsgid>pay_abc</paymsgid>"),
+    "in-place edit must keep the pay message id");
+Assert(editedTransfer.Contains("<payer_username>wxid_payer</payer_username>"),
+    "in-place edit must keep the payer");
+var editedRead = TransactionMessageTemplate.Read(MessageKind.Transfer, editedTransfer);
+Assert(editedRead.Amount == "¥2,000.00" && editedRead.Note == "房租预付款",
+    "in-place edit did not read back");
+Assert(editedRead.Status == "已收款", "bubble status must be read from des");
+
 var writeDbPath = Path.Combine(root, "write-target.db");
 await using (var connection = new SqliteConnection(
     $"Data Source={writeDbPath};Pooling=False"))

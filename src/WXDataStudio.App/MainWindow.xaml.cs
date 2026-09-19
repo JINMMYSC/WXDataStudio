@@ -258,8 +258,10 @@ public partial class MainWindow : Window
         var current = TransactionMessageTemplate.Read(message.Kind, message.Content);
         var input = MoneyMessageDialog.Show(this, message.Kind, current.Amount, current.Note, current.Status);
         if (input is null) return;
-        var content = TransactionMessageTemplate.Build(
-            input.Kind, input.Amount, input.Note, input.Status);
+        // Existing records are edited in place so transaction ids and usernames
+        // survive; only a brand-new record is built from scratch.
+        var content = TransactionMessageTemplate.Update(
+            message.Content, input.Kind, input.Amount, input.Note, input.Status);
         _workspaceService.EditContent(_workspace, message.LocalId, content);
         bubble.Body = ChatExportService.Describe(new WeChatMessage
         {
