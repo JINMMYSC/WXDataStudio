@@ -14,7 +14,9 @@ public sealed class ChatBubble : INotifyPropertyChanged
 {
     private bool _isEditing;
     private string _editText = "";
+    private string _editTime = "";
     private string _body = "";
+    private string _time = "";
 
     public object Source { get; init; } = default!;
     public long LocalId { get; init; }
@@ -25,7 +27,15 @@ public sealed class ChatBubble : INotifyPropertyChanged
     public bool ShowDay { get; init; }
     public string Sender { get; init; } = "";
     public bool ShowSender { get; init; }
-    public string Time { get; init; } = "";
+    public string Time
+    {
+        get => _time;
+        set
+        {
+            _time = value;
+            OnPropertyChanged();
+        }
+    }
     public string KindLabel { get; init; } = "";
     public bool IsTransaction { get; init; }
     public bool IsNew { get; init; }
@@ -76,6 +86,19 @@ public sealed class ChatBubble : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Time being typed inside the bubble editor (empty leaves it as is).</summary>
+    public string EditTime
+    {
+        get => _editTime;
+        set
+        {
+            _editTime = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string CreateTimeText { get; init; } = "";
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void OnPropertyChanged([CallerMemberName] string? name = null) =>
@@ -93,6 +116,7 @@ public sealed class ChatBubble : INotifyPropertyChanged
         Sender = message.Sender,
         ShowSender = ShowsSender(message.ConversationId, message.IsOutgoing, message.Sender),
         Time = ShortTime(message.CreateTime),
+        CreateTimeText = FormatTime(message.CreateTime),
         KindLabel = KindLabelFor(message.Kind),
         Body = ChatExportService.Describe(message),
         IsTransaction = message.IsTransaction,
@@ -112,6 +136,7 @@ public sealed class ChatBubble : INotifyPropertyChanged
         Sender = message.Sender,
         ShowSender = ShowsSender(message.ConversationId, message.IsOutgoing, message.Sender),
         Time = ShortTime(message.CreateTime),
+        CreateTimeText = FormatTime(message.CreateTime),
         KindLabel = KindLabelFor(message.Kind),
         Body = ChatExportService.Describe(new WeChatMessage
         {
@@ -165,5 +190,54 @@ public sealed class ChatBubble : INotifyPropertyChanged
         {
             return "";
         }
+    }
+
+    /// <summary>Full timestamp shown in the editor so it can be changed.</summary>
+    public static string FormatTime(long unixSeconds)
+    {
+        if (unixSeconds <= 0) return "";
+        try
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(unixSeconds)
+                .LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// Accepts the formats people actually type: with or without seconds, with
+    /// '-' or '/', and month-day only (current year is assumed).
+    /// </summary>
+    public static bool TryParseTime(string? text, out long unixSeconds)
+    {
+        unixSeconds = 0;
+        var value = (text ?? "").Trim();
+        if (value.Length == 0) return false;
+        string[] formats =
+        {
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd HH:mm",
+            "yyyy-M-d H:m:s", "yyyy-M-d H:m", "yyyy-MM-dd'T'HH:mm:ss", "MM-dd HH:mm", "MM-dd HH:mm:ss"
+        };
+        if (DateTime.TryParseExact(value, formats, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+        {
+            // "MM-dd HH:mm" carries no year; assume the current one.
+            if (!System.Text.RegularExpressions.Regex.IsMatch(value, @"\d{4}"))
+                parsed = new DateTime(DateTime.Today.Year, parsed.Month, parsed.Day,
+                    parsed.Hour, parsed.Minute, parsed.Second);
+            unixSeconds = new DateTimeOffset(parsed, TimeZoneInfo.Local.GetUtcOffset(parsed))
+                .ToUnixTimeSeconds();
+            return true;
+        }
+        if (DateTime.TryParse(value, out parsed))
+        {
+            unixSeconds = new DateTimeOffset(parsed, TimeZoneInfo.Local.GetUtcOffset(parsed))
+                .ToUnixTimeSeconds();
+            return true;
+        }
+        return false;
     }
 }

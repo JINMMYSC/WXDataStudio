@@ -279,6 +279,13 @@
                                                     <TextBox Text="{Binding EditText, UpdateSourceTrigger=PropertyChanged}"
                                                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64" MaxHeight="220"
                                                              VerticalScrollBarVisibility="Auto" FontSize="14"/>
+                                                    <DockPanel Margin="0,6,0,0">
+                                                        <TextBlock DockPanel.Dock="Left" Text="时间" FontSize="12"
+                                                                   Foreground="#5A6472" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                        <TextBox Text="{Binding EditTime, UpdateSourceTrigger=PropertyChanged}"
+                                                                 FontSize="12" Height="26" VerticalContentAlignment="Center"
+                                                                 ToolTip="格式：2026-09-20 14:30（也可以只写 09-20 14:30）。改完自动按时间排序。"/>
+                                                    </DockPanel>
                                                     <WrapPanel Margin="0,8,0,0">
                                                         <Button Content="保存" Padding="12,5" Click="OnBubbleSave"
                                                                 ToolTip="保存这条修改"/>

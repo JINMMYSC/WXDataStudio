@@ -277,12 +277,43 @@ public partial class MainWindow : Window
         if (BubbleOf(sender) is not { } bubble ||
             bubble.Source is not WorkspaceMessage message || _workspace is null)
             return;
+
+        // Time is optional; a wrong entry is reported instead of being ignored.
+        long? newTime = null;
+        if (!string.IsNullOrWhiteSpace(bubble.EditTime) &&
+            !string.Equals(bubble.EditTime.Trim(), ChatBubble.FormatTime(message.CreateTime),
+                StringComparison.Ordinal))
+        {
+            if (!ChatBubble.TryParseTime(bubble.EditTime, out var parsed))
+            {
+                MessageBox.Show(
+                    "时间看不懂，请按下面的样子填：\n\n2026-09-20 14:30\n\n也可以只写 09-20 14:30（默认今年）。",
+                    "时间格式", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            newTime = parsed;
+        }
+
         _workspaceService.EditContent(_workspace, message.LocalId, bubble.EditText);
+        if (newTime is not null)
+        {
+            _workspaceService.EditTime(_workspace, message.LocalId, newTime.Value);
+            bubble.Time = ChatBubble.FormatTime(newTime.Value)[11..16];
+        }
         bubble.Body = bubble.EditText;
         bubble.IsEditing = false;
+        FillEditor(message);
         await AutoSaveWorkspaceAsync();
+        if (newTime is not null)
+        {
+            // Re-sorting keeps the conversation in time order after a time edit.
+            ApplyMessageFilter();
+            SelectBubbleFor(message);
+        }
         UpdateWriteBackState();
-        SetStatus("已保存这条修改（还在电脑上，点【写回手机】才会同步到微信）。");
+            SetStatus(newTime is null
+            ? "已保存这条修改（还在电脑上，点【写回手机】才会同步到微信）。"
+            : "已保存，并按新的时间重新排好顺序。点【写回手机】同步到微信。");
     }
 
     private void OnBubbleCancel(object sender, RoutedEventArgs e)
@@ -1347,17 +1378,23 @@ public partial class MainWindow : Window
         var query = MessageSearchBox?.Text.Trim() ?? "";
         if (_workspace is not null)
         {
+            // Always show the conversation in time order, so editing a message's
+            // time immediately moves it to the right place.
             MessageList.ItemsSource = BuildWorkspaceBubbles(_workspace.Messages
                 .Where(x => MatchesFilter(x.Kind, index))
                 .Where(x => MatchesSearch(
-                    query, x.Content, x.Sender, x.Attachment, x.LocalId.ToString())));
+                    query, x.Content, x.Sender, x.Attachment, x.LocalId.ToString()))
+                .OrderBy(x => x.CreateTime)
+                .ThenBy(x => x.LocalId));
             return;
         }
         if (_currentMessages.Count > 0)
             MessageList.ItemsSource = BuildBubbles(_currentMessages
                 .Where(x => MatchesFilter(x.Kind, index))
                 .Where(x => MatchesSearch(
-                    query, x.Content, x.Sender, x.ImgPath, x.LocalId.ToString())));
+                    query, x.Content, x.Sender, x.ImgPath, x.LocalId.ToString()))
+                .OrderBy(x => x.CreateTime)
+                .ThenBy(x => x.LocalId));
     }
 
     private static bool MatchesSearch(string query, params string?[] values)
@@ -1465,6 +1502,7 @@ public partial class MainWindow : Window
                 if (MessageList.SelectedItem is ChatBubble selected && edited.CanEdit)
                 {
                     selected.EditText = edited.Content;
+                    selected.EditTime = ChatBubble.FormatTime(edited.CreateTime);
                     selected.IsEditing = true;
                 }
                 UpdateGuideHint(edited.IsTransaction

@@ -633,6 +633,31 @@ using (var exportJson = System.Text.Json.JsonDocument.Parse(
 // Workspace to database writer, then SC1 re-encryption round trip: the restore
 // channel must produce a database that decrypts back to what we wrote.
 // Transfer / red packet payloads are built from amount and note fields.
+// Editing a message's time must parse friendly input and re-sort the chat.
+Assert(ChatBubble.TryParseTime("2026-09-20 14:30", out var parsedTime) &&
+       DateTimeOffset.FromUnixTimeSeconds(parsedTime).LocalDateTime.ToString("yyyy-MM-dd HH:mm") ==
+       "2026-09-20 14:30", "yyyy-MM-dd HH:mm parsing mismatch");
+Assert(ChatBubble.TryParseTime("2026/9/20 14:30:05", out var parsedSlash) &&
+       DateTimeOffset.FromUnixTimeSeconds(parsedSlash).LocalDateTime.Minute == 30,
+    "yyyy/M/d parsing mismatch");
+Assert(ChatBubble.TryParseTime("09-20 08:05", out var parsedShort) &&
+       DateTimeOffset.FromUnixTimeSeconds(parsedShort).LocalDateTime.Year == DateTime.Today.Year,
+    "month-day parsing must assume the current year");
+Assert(!ChatBubble.TryParseTime("昨天下午", out _), "unparseable time must be rejected");
+
+var sortWorkspace = new WorkspaceService().Create(root, conversations[0], new[]
+{
+    new WeChatMessage { LocalId = 11, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_000, Content = "first" },
+    new WeChatMessage { LocalId = 12, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_100, Content = "second" },
+    new WeChatMessage { LocalId = 13, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_200, Content = "third" }
+});
+new WorkspaceService().EditTime(sortWorkspace, 11, 1_726_600_300);
+var orderedByTime = sortWorkspace.Messages
+    .OrderBy(x => x.CreateTime).ThenBy(x => x.LocalId)
+    .Select(x => x.LocalId).ToArray();
+Assert(orderedByTime.SequenceEqual(new long[] { 12, 13, 11 }),
+    "edited time must move the message to its new place in the order");
+
 var moneyTransferXml = TransactionMessageTemplate.Build(MessageKind.Transfer, "¥88.88", "还款", "已收钱");
 var transferBack = TransactionMessageTemplate.Read(MessageKind.Transfer, moneyTransferXml);
 Assert(transferBack.Amount == "¥88.88" && transferBack.Note == "还款" && transferBack.Status == "已收钱",
