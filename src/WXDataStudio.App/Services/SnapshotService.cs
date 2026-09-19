@@ -1,6 +1,7 @@
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text;
 using WXDataStudio.App.Models;
 
 namespace WXDataStudio.App.Services;
@@ -60,6 +61,8 @@ public sealed class SnapshotService
             if (pulled.Count == 0)
                 throw new InvalidOperationException("No database files were captured.");
 
+            await CaptureResolverSupportAsync(root, pulled, log);
+
             var manifest = new SnapshotManifest
             {
                 CreatedAt = DateTimeOffset.Now,
@@ -79,6 +82,88 @@ public sealed class SnapshotService
         {
             await _adb.LaunchWeChatAsync();
         }
+    }
+
+    private async Task CaptureResolverSupportAsync(
+        string snapshotRoot,
+        List<SnapshotFile> captured,
+        Action<string>? log)
+    {
+        var supportRoot = Path.Combine(snapshotRoot, "support");
+        Directory.CreateDirectory(supportRoot);
+
+        var privateFiles = new[]
+        {
+            (Remote: "/data/user/0/com.tencent.mm/shared_prefs/auth_info_key_prefs.xml", Local: "auth_info_key_prefs.xml"),
+            (Remote: "/data/user/0/com.tencent.mm/shared_prefs/system_config_prefs.xml", Local: "system_config_prefs.xml"),
+            (Remote: "/data/user/0/com.tencent.mm/shared_prefs/com.tencent.mm_preferences.xml", Local: "com.tencent.mm_preferences.xml"),
+            (Remote: "/data/user/0/com.tencent.mm/MicroMsg/CompatibleInfo.cfg", Local: "CompatibleInfo.cfg")
+        };
+
+        foreach (var item in privateFiles)
+        {
+            try
+            {
+                var exists = await _adb.RootShellAsync($"test -f '{item.Remote}'");
+                if (!exists.Success) continue;
+                var local = Path.Combine(supportRoot, item.Local);
+                var pull = await _adb.RootPullFileAsync(item.Remote, local);
+                if (!pull.Success || !File.Exists(local) || new FileInfo(local).Length == 0) continue;
+                await AddManifestFileAsync(snapshotRoot, local, captured);
+            }
+            catch
+            {
+                // Resolver support is best-effort and must never invalidate a valid DB snapshot.
+            }
+        }
+
+        var tokenCommands = new Dictionary<string, string>
+        {
+            ["persist.radio.imei"] = "getprop persist.radio.imei",
+            ["ro.ril.oem.imei"] = "getprop ro.ril.oem.imei",
+            ["ril.gsm.imei"] = "getprop ril.gsm.imei",
+            ["android_id"] = "settings get secure android_id",
+            ["ro.serialno"] = "getprop ro.serialno"
+        };
+        var tokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in tokenCommands)
+        {
+            try
+            {
+                var result = await _adb.ShellAsync(item.Value);
+                var value = result.StdOut.Trim();
+                if (result.Success && !string.IsNullOrWhiteSpace(value) &&
+                    !value.Equals("null", StringComparison.OrdinalIgnoreCase))
+                    tokens[item.Key] = value;
+            }
+            catch
+            {
+                // Keep support capture best-effort.
+            }
+        }
+
+        if (tokens.Count > 0)
+        {
+            var tokenPath = Path.Combine(supportRoot, "device_tokens.json");
+            await File.WriteAllTextAsync(tokenPath,
+                JsonSerializer.Serialize(tokens, new JsonSerializerOptions { WriteIndented = true }));
+            await AddManifestFileAsync(snapshotRoot, tokenPath, captured);
+        }
+
+        if (captured.Any(x => x.Name.StartsWith("support/", StringComparison.OrdinalIgnoreCase)))
+            log?.Invoke("Resolver support captured for offline key diagnostics (values are not logged).");
+    }
+
+    private static async Task AddManifestFileAsync(
+        string snapshotRoot,
+        string localPath,
+        List<SnapshotFile> captured)
+    {
+        var bytes = await File.ReadAllBytesAsync(localPath);
+        if (bytes.LongLength == 0) return;
+        var relative = Path.GetRelativePath(snapshotRoot, localPath).Replace('\\', '/');
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        captured.Add(new SnapshotFile(relative, bytes.LongLength, hash));
     }
 }
 

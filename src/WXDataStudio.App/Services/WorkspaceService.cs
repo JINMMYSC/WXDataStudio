@@ -25,6 +25,41 @@ public sealed class WorkspaceService
         };
     }
 
+    public WorkspaceMessage AddMessage(
+        WorkspaceDocument workspace,
+        MessageKind kind,
+        string content,
+        string? attachment = null,
+        DateTimeOffset? when = null)
+    {
+        if (!MessageKindPolicy.IsEditable(kind))
+            throw new InvalidOperationException("This message type cannot be created in a workspace.");
+
+        var nextId = workspace.Messages.Where(x => x.LocalId < 0)
+            .Select(x => x.LocalId).DefaultIfEmpty(0).Min() - 1;
+        var message = WorkspaceMessage.CreateNew(
+            nextId,
+            workspace.ConversationId,
+            kind,
+            (when ?? DateTimeOffset.Now).ToUnixTimeSeconds(),
+            content,
+            attachment);
+        workspace.Messages.Add(message);
+        workspace.Messages.Sort((a, b) =>
+        {
+            var byTime = a.CreateTime.CompareTo(b.CreateTime);
+            return byTime != 0 ? byTime : a.LocalId.CompareTo(b.LocalId);
+        });
+        workspace.Audit.Add(new WorkspaceAuditEntry
+        {
+            MessageId = message.LocalId,
+            Field = "create",
+            Before = "",
+            After = kind.ToString()
+        });
+        return message;
+    }
+
     public void EditContent(WorkspaceDocument workspace, long messageId, string newContent)
     {
         var msg = GetEditable(workspace, messageId);
@@ -42,6 +77,8 @@ public sealed class WorkspaceService
     public void EditAttachment(WorkspaceDocument workspace, long messageId, string? path)
     {
         var msg = GetEditable(workspace, messageId);
+        if (!string.IsNullOrWhiteSpace(path) && !MessageKindPolicy.HasExternalMedia(msg.Kind))
+            throw new InvalidOperationException("This message type does not support external media replacement.");
         Audit(workspace, msg, "attachment", msg.Attachment ?? "", path ?? "");
         msg.Attachment = path;
     }
@@ -51,6 +88,18 @@ public sealed class WorkspaceService
         var msg = workspace.Messages.FirstOrDefault(x => x.LocalId == messageId)
             ?? throw new KeyNotFoundException($"Message {messageId} was not found.");
         if (msg.Sensitive) return;
+        if (msg.IsNew)
+        {
+            workspace.Audit.Add(new WorkspaceAuditEntry
+            {
+                MessageId = msg.LocalId,
+                Field = "delete-new",
+                Before = msg.Kind.ToString(),
+                After = ""
+            });
+            workspace.Messages.Remove(msg);
+            return;
+        }
         Audit(workspace, msg, "revert", "edited", "original");
         msg.Content = msg.OriginalContent;
         msg.CreateTime = msg.OriginalCreateTime;

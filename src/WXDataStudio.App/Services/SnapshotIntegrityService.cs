@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -33,6 +34,30 @@ public sealed class SnapshotIntegrityService
                 issues.Add($"SHA-256 mismatch: {item.Name}");
             if (bytes.LongLength != item.Size)
                 issues.Add($"Size mismatch: {item.Name}");
+
+            // A hash manifest can faithfully hash a DB already corrupted during adb
+            // transfer. Validate known SQLite/WAL structural alignment as well.
+            if (item.Name.Equals("EnMicroMsg.db", StringComparison.OrdinalIgnoreCase) &&
+                bytes.Length >= 16 && bytes.Length % 1024 != 0 &&
+                !bytes.AsSpan(0, 16).SequenceEqual("SQLite format 3\0"u8))
+                issues.Add("Encrypted EnMicroMsg.db is not aligned to 1024-byte pages.");
+
+            if (item.Name.Equals("EnMicroMsg.db-wal", StringComparison.OrdinalIgnoreCase))
+            {
+                if (bytes.Length < 32)
+                    issues.Add("WAL header is incomplete.");
+                else
+                {
+                    var pageSize = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4));
+                    if (pageSize is < 512 or > 65536 || (pageSize & (pageSize - 1)) != 0 ||
+                        (bytes.LongLength - 32) % (pageSize + 24L) != 0)
+                        issues.Add("WAL frame alignment is invalid.");
+                }
+            }
+
+            if (item.Name.Equals("EnMicroMsg.db-shm", StringComparison.OrdinalIgnoreCase) &&
+                bytes.Length % 32768 != 0)
+                issues.Add("SHM file alignment is invalid.");
         }
 
         if (!manifest.Files.Any(x => x.Name == "EnMicroMsg.db"))

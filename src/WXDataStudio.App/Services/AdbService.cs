@@ -78,34 +78,145 @@ public sealed class AdbService
 
     public async Task<CommandResult> RootPullFileAsync(string remotePath, string localPath)
     {
+        // On some rooted devices, "adb exec-out su -c cat" silently inserts CR bytes
+        // into binary stdout. Stage the file under an adb-readable, private temp path
+        // and use adb pull, then verify its exact byte count and SHA-256.
         var directory = Path.GetDirectoryName(localPath);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        var psi = new ProcessStartInfo
+        var remoteTemp = "/data/local/tmp/wxds-" + Guid.NewGuid().ToString("N") + ".bin";
+        var localTemp = localPath + ".partial-" + Guid.NewGuid().ToString("N");
+        static string Q(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+        CommandResult operation;
+        try
         {
-            FileName = _adbPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        psi.ArgumentList.Add("exec-out");
-        psi.ArgumentList.Add("su");
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add($"cat '{remotePath.Replace("'", "'\\''", StringComparison.Ordinal)}'");
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException("Unable to start adb exec-out.");
-        await using (var file = File.Create(localPath))
-            await process.StandardOutput.BaseStream.CopyToAsync(file);
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        if (process.ExitCode != 0 && File.Exists(localPath)) File.Delete(localPath);
-        return new CommandResult(process.ExitCode, "", stderr);
+            operation = await PullRootFileToTemporaryAsync(
+                remotePath, remoteTemp, localTemp, Q);
+        }
+        catch (Exception ex)
+        {
+            operation = new CommandResult(1, "", "Root pull failed: " + ex.GetType().Name);
+        }
+
+        var remoteCleaned = await TryRemoveRemoteTempAsync(remoteTemp, Q);
+        if (!remoteCleaned)
+        {
+            var localCleaned = TryDeleteLocalFile(localTemp);
+            return new CommandResult(1, "", localCleaned
+                ? "Sensitive device temporary file could not be removed."
+                : "Sensitive device and local temporary files could not be removed.");
+        }
+
+        if (!operation.Success)
+        {
+            return TryDeleteLocalFile(localTemp)
+                ? operation
+                : new CommandResult(1, "", "Sensitive local temporary file could not be removed.");
+        }
+
+        try
+        {
+            File.Move(localTemp, localPath, overwrite: true);
+            return new CommandResult(0, "", "");
+        }
+        catch (Exception ex)
+        {
+            return TryDeleteLocalFile(localTemp)
+                ? new CommandResult(1, "", "Root pull failed: " + ex.GetType().Name)
+                : new CommandResult(1, "", "Sensitive local temporary file could not be removed.");
+        }
+    }
+
+    private async Task<CommandResult> PullRootFileToTemporaryAsync(
+        string remotePath,
+        string remoteTemp,
+        string localTemp,
+        Func<string, string> quote)
+    {
+        var sourceBefore = await ReadRootFingerprintAsync(remotePath, quote);
+        if (sourceBefore is null)
+            return new CommandResult(1, "", "Source file fingerprint could not be validated.");
+
+        var stage = await RootShellAsync(
+            $"umask 077 && cat {quote(remotePath)} > {quote(remoteTemp)} && " +
+            $"chown 2000:2000 {quote(remoteTemp)} && chmod 600 {quote(remoteTemp)}");
+        if (!stage.Success)
+            return new CommandResult(stage.ExitCode, "", "Could not securely stage source file.");
+
+        var sourceAfter = await ReadRootFingerprintAsync(remotePath, quote);
+        var staged = await ReadRootFingerprintAsync(remoteTemp, quote);
+        if (sourceAfter is null || staged is null)
+            return new CommandResult(1, "", "Staged file fingerprint could not be validated.");
+        if (!sourceBefore.Matches(sourceAfter) || !sourceAfter.Matches(staged))
+            return new CommandResult(1, "", "Source file changed or differs from the staged copy.");
+
+        var pull = await PullAsync(remoteTemp, localTemp);
+        if (!pull.Success || !File.Exists(localTemp))
+            return new CommandResult(1, "", "Binary-safe adb pull failed.");
+        if (new FileInfo(localTemp).Length != staged.Size)
+            return new CommandResult(1, "", "Pulled file size differs from the device.");
+
+        await using var input = File.OpenRead(localTemp);
+        var actualHash = Convert.ToHexString(
+            await System.Security.Cryptography.SHA256.HashDataAsync(input));
+        return actualHash.Equals(staged.Sha256, StringComparison.OrdinalIgnoreCase)
+            ? new CommandResult(0, "", "")
+            : new CommandResult(1, "", "Pulled file checksum differs from the device.");
+    }
+
+    private async Task<bool> TryRemoveRemoteTempAsync(
+        string remoteTemp, Func<string, string> quote)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var cleanup = await RootShellAsync(
+                    $"rm -f {quote(remoteTemp)} && test ! -e {quote(remoteTemp)}");
+                if (cleanup.Success) return true;
+            }
+            catch
+            {
+                // Retry once, then return an explicit cleanup failure to the caller.
+            }
+        }
+        return false;
+    }
+
+    private static bool TryDeleteLocalFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return !File.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<DeviceFileFingerprint?> ReadRootFingerprintAsync(
+        string remotePath, Func<string, string> quote)
+    {
+        var sizeResult = await RootShellAsync($"stat -c %s {quote(remotePath)}");
+        if (!sizeResult.Success ||
+            !long.TryParse(sizeResult.StdOut.Trim(), out var size) || size <= 0)
+            return null;
+
+        var hashResult = await RootShellAsync($"sha256sum {quote(remotePath)}");
+        var hash = hashResult.StdOut
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault() ?? "";
+        return hashResult.Success && hash.Length == 64 && hash.All(Uri.IsHexDigit)
+            ? new DeviceFileFingerprint(size, hash)
+            : null;
     }
 
     public Task<CommandResult> RootShellAsync(string command)
     {
-        var escaped = command.Replace("\"", "\\\"");
-        return RunAsync($"shell su -c \"{escaped}\"");
+        static string ShellQuote(string value) =>
+            "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+        return RunArgumentsAsync("shell", $"su -c {ShellQuote(command)}");
     }
 
     private async Task<string> GetPropAsync(string name)
@@ -188,6 +299,26 @@ public sealed class AdbService
         return new CommandResult(process.ExitCode, await stdoutTask, await stderrTask);
     }
 
+    private async Task<CommandResult> RunArgumentsAsync(params string[] arguments)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = _adbPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in arguments) psi.ArgumentList.Add(argument);
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Unable to start adb.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return new CommandResult(process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
     private static string ResolveAdbPath()
     {
         var appLocal = Path.Combine(
@@ -203,4 +334,11 @@ public sealed class AdbService
 public sealed record CommandResult(int ExitCode, string StdOut, string StdErr)
 {
     public bool Success => ExitCode == 0;
+}
+
+public sealed record DeviceFileFingerprint(long Size, string Sha256)
+{
+    public bool Matches(DeviceFileFingerprint other) =>
+        Size == other.Size &&
+        Sha256.Equals(other.Sha256, StringComparison.OrdinalIgnoreCase);
 }

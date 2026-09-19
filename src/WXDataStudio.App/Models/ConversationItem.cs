@@ -13,8 +13,22 @@ public sealed class ConversationItem
         : !string.IsNullOrWhiteSpace(DisplayName) ? DisplayName
         : !string.IsNullOrWhiteSpace(NickName) ? NickName
         : Username;
-    public string LastDisplayTime => LastTime <= 0 ? "" : DateTimeOffset.FromUnixTimeSeconds(LastTime)
-        .LocalDateTime.ToString("MM-dd HH:mm");
+    public string LastDisplayTime
+    {
+        get
+        {
+            if (LastTime <= 0) return "";
+            try
+            {
+                return DateTimeOffset.FromUnixTimeSeconds(LastTime)
+                    .LocalDateTime.ToString("MM-dd HH:mm");
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return "";
+            }
+        }
+    }
     public override string ToString() => string.IsNullOrWhiteSpace(LastDisplayTime)
         ? EffectiveName
         : $"{EffectiveName}   {LastDisplayTime}";
