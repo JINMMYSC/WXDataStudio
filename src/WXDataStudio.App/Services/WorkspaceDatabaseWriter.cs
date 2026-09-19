@@ -62,6 +62,27 @@ public sealed class WorkspaceDatabaseWriter
         var sequenceColumn = Pick(columns, SequenceColumns);
         var serverIdColumn = Pick(columns, ServerIdColumns);
 
+        // WeChat stores createTime either in seconds or in milliseconds depending
+        // on the build. Writing the wrong unit makes the message show up in 1970,
+        // so the unit is taken from the rows that are already there.
+        var timeInMilliseconds = await UsesMillisecondsAsync(
+            connection, table, timeColumn, cancellationToken);
+        long ToDatabaseTime(long unixSeconds) =>
+            timeInMilliseconds ? unixSeconds * 1000 : unixSeconds;
+
+        if (timeInMilliseconds && timeColumn is not null)
+        {
+            // Repair rows an earlier build wrote in seconds: WeChat reads them as
+            // milliseconds and shows them in 1970.
+            await using var repair = connection.CreateCommand();
+            repair.CommandText =
+                $"UPDATE {Q(table)} SET {Q(timeColumn)}={Q(timeColumn)}*1000 " +
+                $"WHERE {Q(timeColumn)}>0 AND {Q(timeColumn)}<100000000000";
+            var repaired = await repair.ExecuteNonQueryAsync(cancellationToken);
+            if (repaired > 0)
+                warnings.Add($"Repaired {repaired} record(s) whose time was stored in seconds.");
+        }
+
         var conversationTable = await ResolveConversationTableAsync(connection, cancellationToken);
         var conversationContentColumn = conversationTable is null
             ? null
@@ -97,7 +118,7 @@ public sealed class WorkspaceDatabaseWriter
             if (timeColumn is not null && message.CreateTime != message.OriginalCreateTime)
             {
                 assignments.Add($"{Q(timeColumn)}=$time");
-                command.Parameters.AddWithValue("$time", message.CreateTime);
+                command.Parameters.AddWithValue("$time", ToDatabaseTime(message.CreateTime));
             }
             if (imageColumn is not null &&
                 !string.Equals(message.Attachment, message.OriginalAttachment, StringComparison.Ordinal))
@@ -157,7 +178,7 @@ public sealed class WorkspaceDatabaseWriter
             Add(sendColumn, "$send", 1);
             Add(typeColumn, "$type", MapRawType(message.Kind));
             Add(statusColumn, "$status", 3);
-            Add(timeColumn, "$time", message.CreateTime);
+            Add(timeColumn, "$time", ToDatabaseTime(message.CreateTime));
             Add(sequenceColumn, "$seq", nextSequence++);
             Add(contentColumn, "$content", message.Content);
             Add(imageColumn, "$image", message.Attachment);
@@ -189,7 +210,7 @@ public sealed class WorkspaceDatabaseWriter
                         $"UPDATE {Q(conversationTable)} SET {Q(conversationContentColumn)}=$content, " +
                         $"{Q(conversationTimeColumn)}=$time WHERE {Q(talkerColumn)}=$talker";
                     summary.Parameters.AddWithValue("$content", message.Content);
-                    summary.Parameters.AddWithValue("$time", message.CreateTime);
+                    summary.Parameters.AddWithValue("$time", ToDatabaseTime(message.CreateTime));
                     summary.Parameters.AddWithValue("$talker", workspace.ConversationId);
                     await summary.ExecuteNonQueryAsync(cancellationToken);
                 }
@@ -250,6 +271,24 @@ public sealed class WorkspaceDatabaseWriter
         if (type.Contains("BLOB")) return Array.Empty<byte>();
         if (type.Contains("INT") || type.Contains("REAL") || type.Contains("NUM")) return 0L;
         return "";
+    }
+
+    /// <summary>
+    /// True when existing rows store the timestamp in milliseconds (values around
+    /// 1.7e12) instead of seconds (around 1.7e9).
+    /// </summary>
+    private static async Task<bool> UsesMillisecondsAsync(
+        SqliteConnection connection,
+        string table,
+        string? timeColumn,
+        CancellationToken cancellationToken)
+    {
+        if (timeColumn is null) return false;
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT ifnull(max({Q(timeColumn)}),0) FROM {Q(table)}";
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        var max = value is null or DBNull ? 0L : Convert.ToInt64(value);
+        return max > 100_000_000_000L;
     }
 
     private static async Task<long> NextValueAsync(

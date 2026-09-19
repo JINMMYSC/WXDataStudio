@@ -754,6 +754,60 @@ Assert(writeResult.Inserted == 2, "writer must insert both recovered rows");
 Assert(writeResult.Deleted == 1, "writer must delete the removed row");
 Assert((await WorkspaceDatabaseWriter.IntegrityCheckAsync(writeDbPath)) == "ok",
     "written database failed its integrity check");
+
+// The phone stores createTime in milliseconds; a message written in seconds
+// shows up as 1970. The writer must follow whatever unit the table already uses.
+var millisecondsDb = Path.Combine(root, "write-ms.db");
+await using (var msConnection = new SqliteConnection(
+    $"Data Source={millisecondsDb};Pooling=False"))
+{
+    await msConnection.OpenAsync();
+    foreach (var sql in new[]
+    {
+        "PRAGMA page_size=1024;", "VACUUM;",
+        """
+        CREATE TABLE message(msgId INTEGER PRIMARY KEY, msgSvrId INTEGER, talker TEXT, isSend INTEGER,
+            type INTEGER, status INTEGER, createTime INTEGER, msgSeq INTEGER, content TEXT,
+            imgPath TEXT, reserved TEXT);
+        """,
+        // Existing rows use milliseconds, like the real phone does.
+        "INSERT INTO message VALUES (1,101,'alice',0,1,3,1726500000000,1,'hello',NULL,NULL);",
+        // A row an older build wrote in seconds and WeChat would show as 1970.
+        "INSERT INTO message VALUES (2,102,'alice',0,1,3,1726500900,2,'bad unit',NULL,NULL);"
+    })
+    {
+        await using var msCommand = msConnection.CreateCommand();
+        msCommand.CommandText = sql;
+        await msCommand.ExecuteNonQueryAsync();
+    }
+}
+var msService = new WorkspaceService();
+var msWorkspace = msService.Create(root, conversations[0], new[]
+{
+    new WeChatMessage
+    {
+        LocalId = 1, ConversationId = "alice", Kind = MessageKind.Text,
+        CreateTime = 1_726_500_000, Content = "hello"
+    }
+});
+msService.EditTime(msWorkspace, 1, 1_726_500_500);
+msService.AddMessage(msWorkspace, MessageKind.Text, "recovered in ms");
+var msResult = await new WorkspaceDatabaseWriter().ApplyAsync(millisecondsDb, msWorkspace);
+Assert(msResult.Updated == 1 && msResult.Inserted == 1, "millisecond fixture write mismatch");
+await using (var verifyMs = new SqliteConnection(
+    $"Data Source={millisecondsDb};Mode=ReadOnly;Pooling=False"))
+{
+    await verifyMs.OpenAsync();
+    await using var verifyCommand = verifyMs.CreateCommand();
+    verifyCommand.CommandText = "SELECT min(createTime), max(createTime), count(*) FROM message";
+    await using var reader2 = await verifyCommand.ExecuteReaderAsync();
+    Assert(await reader2.ReadAsync(), "millisecond verification failed");
+    Assert(reader2.GetInt64(0) == 1_726_500_500_000L,
+        "edited time must be written in milliseconds, not seconds");
+    Assert(reader2.GetInt64(1) >= 1_726_500_500_000L,
+        "inserted time must be written in milliseconds, not seconds");
+    Assert(reader2.GetInt64(2) == 3, "millisecond fixture row count mismatch");
+}
 Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.Image) == 3, "image raw type mismatch");
 Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.RedPacket) == 49, "red packet raw type mismatch");
 
