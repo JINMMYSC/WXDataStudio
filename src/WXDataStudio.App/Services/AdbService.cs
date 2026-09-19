@@ -78,28 +78,56 @@ public sealed class AdbService
 
     public async Task<CommandResult> RootPullFileAsync(string remotePath, string localPath)
     {
+        // On some rooted devices, "adb exec-out su -c cat" silently inserts CR bytes
+        // into binary stdout. Stage the file under an adb-readable, private temp path
+        // and use adb pull, then verify its exact byte count and SHA-256.
         var directory = Path.GetDirectoryName(localPath);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        var psi = new ProcessStartInfo
+        var remoteTemp = "/data/local/tmp/wxds-" + Guid.NewGuid().ToString("N") + ".bin";
+        var localTemp = localPath + ".partial-" + Guid.NewGuid().ToString("N");
+        static string Q(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+        try
         {
-            FileName = _adbPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        psi.ArgumentList.Add("exec-out");
-        psi.ArgumentList.Add("su");
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add($"cat '{remotePath.Replace("'", "'\\''", StringComparison.Ordinal)}'");
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException("Unable to start adb exec-out.");
-        await using (var file = File.Create(localPath))
-            await process.StandardOutput.BaseStream.CopyToAsync(file);
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        if (process.ExitCode != 0 && File.Exists(localPath)) File.Delete(localPath);
-        return new CommandResult(process.ExitCode, "", stderr);
+            var stage = await RootShellAsync(
+                $"cat {Q(remotePath)} > {Q(remoteTemp)} && chown 2000:2000 {Q(remoteTemp)} && chmod 600 {Q(remoteTemp)}");
+            if (!stage.Success)
+                return new CommandResult(stage.ExitCode, "", "Could not securely stage source file.");
+
+            var sizeResult = await RootShellAsync($"stat -c %s {Q(remoteTemp)}");
+            if (!sizeResult.Success || !long.TryParse(sizeResult.StdOut.Trim(), out var expected) || expected <= 0)
+                return new CommandResult(1, "", "Staged file size could not be validated.");
+
+            var hashResult = await RootShellAsync($"sha256sum {Q(remoteTemp)}");
+            var expectedHash = hashResult.StdOut.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+            if (!hashResult.Success || expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit))
+                return new CommandResult(1, "", "Staged file checksum could not be validated.");
+
+            var pull = await PullAsync(remoteTemp, localTemp);
+            if (!pull.Success || !File.Exists(localTemp))
+                return new CommandResult(1, "", "Binary-safe adb pull failed.");
+
+            if (new FileInfo(localTemp).Length != expected)
+                return new CommandResult(1, "", "Pulled file size differs from the device.");
+
+            await using (var input = File.OpenRead(localTemp))
+            {
+                var actualHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(input));
+                if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+                    return new CommandResult(1, "", "Pulled file checksum differs from the device.");
+            }
+
+            File.Move(localTemp, localPath, overwrite: true);
+            return new CommandResult(0, "", "");
+        }
+        catch (Exception ex)
+        {
+            return new CommandResult(1, "", "Root pull failed: " + ex.GetType().Name);
+        }
+        finally
+        {
+            try { await RootShellAsync($"rm -f {Q(remoteTemp)}"); } catch { }
+            if (File.Exists(localTemp)) File.Delete(localTemp);
+        }
     }
 
     public Task<CommandResult> RootShellAsync(string command)
