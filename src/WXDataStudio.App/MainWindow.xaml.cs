@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private bool _manualDatabaseKeyIsRawHex;
     private SnapshotReadSession? _readSession;
     private bool _busy;
+    private bool _mediaWarningShown;
 
     public MainWindow()
     {
@@ -1211,6 +1212,8 @@ public partial class MainWindow : Window
             var changes = _diffService.GetDiffs(_workspace);
             var transactionChanges = _workspace.Messages.Count(x =>
                 x.IsTransaction && (x.IsNew || x.IsDirty || x.IsDeleted));
+            var newMediaChanges = _workspace.Messages.Count(x =>
+                x.IsNew && MessageKindPolicy.HasExternalMedia(x.Kind));
             var confirmation = MessageBox.Show(
                 $"即将把工作副本写回手机：\n\n" +
                 $"设备：{_device.Model}\n" +
@@ -1220,6 +1223,10 @@ public partial class MainWindow : Window
                 (transactionChanges > 0
                     ? $"其中 {transactionChanges} 条是交易类记录：这类记录由微信和服务器同步，" +
                       "写回后可能被微信改回原样，详情页也仍显示服务器上的原金额。\n\n"
+                    : "") +
+                (newMediaChanges > 0
+                    ? $"其中 {newMediaChanges} 条是新增的图片/语音/视频/文件：微信在手机上打不开电脑上的媒体文件，" +
+                      "这些气泡不会有内容显示（记录本身会写进数据库）。\n\n"
                     : "") +
                 "流程：生成加密数据库 → 手机侧备份原库 → 覆盖写入 → 修正权限 → 重启微信 → 回读校验。\n" +
                 "过程中微信会被强制停止。手机上的原库会以 .wxds-backup 前缀保留一份，可随时还原。\n\n" +
@@ -1606,6 +1613,17 @@ public partial class MainWindow : Window
         string? attachment = null;
         if (!string.IsNullOrWhiteSpace(fileFilter))
         {
+            if (!_mediaWarningShown)
+            {
+                _mediaWarningShown = true;
+                MessageBox.Show(
+                    "新增图片、语音、视频、文件这类记录时要注意：\n\n" +
+                    "微信在手机上只认它自己加密存放的媒体文件，电脑上的图片/视频写进手机后，微信打不开，" +
+                    "那个气泡不会显示内容。\n\n" +
+                    "想要补的记录能正常显示，请用【纯文字】（或链接、位置、名片）。\n\n" +
+                    "这条记录仍然会写进数据库，也可以正常导出。",
+                    "新增媒体记录", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
             var dialog = new OpenFileDialog { Filter = fileFilter, Multiselect = false };
             if (dialog.ShowDialog(this) != true) return;
             attachment = await _workspaceMedia.ImportAsync(_workspace, dialog.FileName);
