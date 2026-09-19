@@ -27,6 +27,15 @@ public static class MoneyMessageDialog
 
         var panel = new StackPanel { Margin = new Thickness(18) };
 
+        panel.Children.Add(new TextBlock
+        {
+            Text = "这里改的是聊天里显示的文字。转账/红包点进去的“详情页”由微信服务器提供，" +
+                   "本地改不了，可能提示失败或仍显示原来的金额。",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = System.Windows.Media.Brushes.DarkGoldenrod,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+
         var kindBox = new ComboBox { Margin = new Thickness(0, 0, 0, 10) };
         kindBox.Items.Add("转账");
         kindBox.Items.Add("红包");

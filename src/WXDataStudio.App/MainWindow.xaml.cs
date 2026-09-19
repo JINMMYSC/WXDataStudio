@@ -246,7 +246,8 @@ public partial class MainWindow : Window
         ApplyMessageFilter();
         SelectBubbleFor(message);
         UpdateWriteBackState();
-        SetStatus("已添加一条交易类记录；想改金额就在气泡里点【改金额/备注】。");
+        SetStatus("已添加一条交易类记录。注意：改的只是聊天里显示的文字，点进转账详情的金额由微信服务器决定，不会跟着变。");
+        UpdateGuideHint("交易类记录只是聊天里显示的文字；转账详情页来自微信服务器，本地改不了。");
     }
 
     private async void OnBubbleMoney(object sender, RoutedEventArgs e)
@@ -269,7 +270,8 @@ public partial class MainWindow : Window
         bubble.IsEditing = false;
         await AutoSaveWorkspaceAsync();
         UpdateWriteBackState();
-        SetStatus("金额/备注已更新。");
+        SetStatus("聊天里显示的金额已更新。注意：点进转账详情的金额来自微信服务器，不会跟着变。");
+        UpdateGuideHint("金额文字已改。转账详情页由微信服务器提供，可能提示失败或显示原金额，这是正常现象。");
     }
 
     private async void OnBubbleSave(object sender, RoutedEventArgs e)
@@ -1160,12 +1162,18 @@ public partial class MainWindow : Window
             }
 
             var changes = _diffService.GetDiffs(_workspace);
+            var transactionChanges = _workspace.Messages.Count(x =>
+                x.IsTransaction && (x.IsNew || x.IsDirty || x.IsDeleted));
             var confirmation = MessageBox.Show(
                 $"即将把工作副本写回手机：\n\n" +
                 $"设备：{_device.Model}\n" +
                 $"会话：{_workspace.ConversationName}\n" +
                 $"消息：{_workspace.Messages.Count} 条\n" +
                 $"改动：{changes.Count} 项\n\n" +
+                (transactionChanges > 0
+                    ? $"其中 {transactionChanges} 条是交易类记录：聊天里显示的文字会同步，但转账/红包的详情页由微信服务器提供，" +
+                      "点进去可能提示失败或仍显示原来的金额。\n\n"
+                    : "") +
                 "流程：生成加密数据库 → 手机侧备份原库 → 覆盖写入 → 修正权限 → 重启微信 → 回读校验。\n" +
                 "过程中微信会被强制停止。手机上的原库会以 .wxds-backup 前缀保留一份，可随时还原。\n\n" +
                 "确定继续吗？",
