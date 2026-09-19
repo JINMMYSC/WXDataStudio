@@ -46,9 +46,9 @@
                     <StackPanel>
                         <TextBlock Text="第 3 步 · 补一条被删掉的记录" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
-                                   Text="点中间上方的【＋ 添加消息】，选要补的类型：文字、图片、视频、语音、文件、表情、位置、名片、链接、引用。"/>
+                                   Text="聊天底部有一个输入框，和微信一样：打完字点【发送】，这条记录就加进聊天里了。左边可以选这条算【我发送】还是【对方发送】。"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#6A737D"
-                                   Text="图片、视频、语音、文件会先让你从电脑里选文件；其它类型会生成一条草稿，接着在右边改内容就行。"/>
+                                   Text="要补图片、语音、文件、表情、位置、名片、链接，点输入框左边的【＋】选类型，再从电脑里挑文件。"/>
                     </StackPanel>
                 </Border>
 
@@ -56,9 +56,9 @@
                     <StackPanel>
                         <TextBlock Text="第 4 步 · 改一条记录" FontSize="16" FontWeight="SemiBold" Foreground="#1B5FA8"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#1B5FA8"
-                                   Text="在中间点一条消息，右边就会出现【修改这条消息】：直接改内容，需要的话换附件、改时间。点【保存修改】生效。"/>
+                                   Text="像在微信里一样：点中间任意一条消息，它当场变成一个输入框，直接改字，改完点【保存】；想放弃就点【取消】。"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#3E6EA8"
-                                   Text="所有类型都能改，包括红包、转账、收付款记录（会标注“交易类”，改动会留痕）。改完不点保存就不会生效。"/>
+                                   Text="所有类型都能改，包括红包、转账、收付款记录（会标注“交易类”，改动会留痕）。想删掉某条，就在它的输入框里点【删除这条】。"/>
                     </StackPanel>
                 </Border>
 
@@ -66,7 +66,7 @@
                     <StackPanel>
                         <TextBlock Text="第 5 步 · 改错了怎么办" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
-                                   Text="点右边【撤销这条修改】，改过的会恢复原样，新补的记录会被删掉。新增和改过的消息上会显示“新增”“已修改”标记，一眼能看出动过哪些。"/>
+                                   Text="在气泡里点【取消】就放弃这次修改；想恢复已经保存的改动，展开【更多信息】点【撤销这条修改】。新增和改过的消息上会显示“新增”“已修改”标记，一眼能看出动过哪些。"/>
                     </StackPanel>
                 </Border>
 

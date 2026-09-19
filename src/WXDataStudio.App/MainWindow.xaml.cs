@@ -100,6 +100,150 @@ public partial class MainWindow : Window
 
     private void SetStatus(string text) => StatusText.Text = text;
 
+    private void ShowDetails()
+    {
+        DetailColumn.Width = new GridLength(400);
+        DetailPanel.Visibility = Visibility.Visible;
+    }
+
+    private void OnHideDetails(object sender, RoutedEventArgs e)
+    {
+        DetailColumn.Width = new GridLength(0);
+        DetailPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private bool ComposerSendsOutgoing => SendAsBox?.SelectedIndex != 1;
+
+    private string ComposerSender =>
+        ComposerSendsOutgoing ? "" : (SenderNameBox?.Text ?? "").Trim();
+
+    private void OnSendBoxChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SenderNameBox is null) return;
+        SenderNameBox.Visibility = ComposerSendsOutgoing ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Puts the current editable copy on disk without bothering the user.</summary>
+    private async Task AutoSaveWorkspaceAsync()
+    {
+        if (_workspace is null) return;
+        try
+        {
+            var root = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "WXDataStudio", "workspaces");
+            await _workspaceService.SaveAsync(_workspace, root);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Auto-save failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Types straight into the chat, like WeChat's composer.</summary>
+    private async void OnSendMessage(object sender, RoutedEventArgs e)
+    {
+        var text = ComposerBox.Text.Trim();
+        if (text.Length == 0)
+        {
+            SetStatus("先在上面输入内容，再点【发送】。");
+            return;
+        }
+        if (_workspace is null)
+        {
+            SetStatus("先在左边点一个聊天，再输入内容。");
+            return;
+        }
+
+        var message = _workspaceService.AddMessage(
+            _workspace, MessageKind.Text, text, null, null,
+            ComposerSendsOutgoing, ComposerSender);
+        await AutoSaveWorkspaceAsync();
+        ComposerBox.Clear();
+        MessageFilter.SelectedIndex = 0;
+        ApplyMessageFilter();
+        SelectBubbleFor(message);
+        SetStatus("已添加一条记录；确认没问题后点右上角【写回手机】。");
+        UpdateGuideHint("新记录已经在聊天里了。要继续改别的，点那条消息就行；改完点【写回手机】。");
+    }
+
+    private void SelectBubbleFor(WorkspaceMessage message)
+    {
+        if (MessageList.ItemsSource is IEnumerable<ChatBubble> bubbles)
+            MessageList.SelectedItem = bubbles.FirstOrDefault(x => ReferenceEquals(x.Source, message));
+        if (MessageList.SelectedItem is not null) MessageList.ScrollIntoView(MessageList.SelectedItem);
+    }
+
+    private static ChatBubble? BubbleOf(object sender) =>
+        (sender as FrameworkElement)?.DataContext as ChatBubble;
+
+    private async void OnBubbleSave(object sender, RoutedEventArgs e)
+    {
+        if (BubbleOf(sender) is not { } bubble ||
+            bubble.Source is not WorkspaceMessage message || _workspace is null)
+            return;
+        _workspaceService.EditContent(_workspace, message.LocalId, bubble.EditText);
+        bubble.Body = bubble.EditText;
+        bubble.IsEditing = false;
+        await AutoSaveWorkspaceAsync();
+        SetStatus("已保存这条修改（还在电脑上，点【写回手机】才会同步到微信）。");
+    }
+
+    private void OnBubbleCancel(object sender, RoutedEventArgs e)
+    {
+        if (BubbleOf(sender) is { } bubble) bubble.IsEditing = false;
+    }
+
+    private async void OnBubbleDelete(object sender, RoutedEventArgs e)
+    {
+        if (BubbleOf(sender) is not { } bubble ||
+            bubble.Source is not WorkspaceMessage message || _workspace is null)
+            return;
+        var confirm = MessageBox.Show(
+            "确定删除这条记录吗？\n\n电脑上的副本会立刻删掉，手机要等点【写回手机】之后才会同步删除。",
+            "删除记录", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.OK) return;
+
+        if (_workspaceService.Delete(_workspace, message.LocalId))
+        {
+            await AutoSaveWorkspaceAsync();
+            ApplyMessageFilter();
+            SetStatus("已删除这条记录。点【写回手机】后手机上也会删除。");
+        }
+    }
+
+    private async void OnBubbleAttach(object sender, RoutedEventArgs e)
+    {
+        if (BubbleOf(sender) is not { } bubble ||
+            bubble.Source is not WorkspaceMessage message || _workspace is null)
+            return;
+        var dialog = new OpenFileDialog { Filter = "所有文件|*.*", Multiselect = false };
+        if (dialog.ShowDialog(this) != true) return;
+        try
+        {
+            var imported = await _workspaceMedia.ImportAsync(_workspace, dialog.FileName);
+            _workspaceService.EditAttachment(_workspace, message.LocalId, imported);
+            await AutoSaveWorkspaceAsync();
+            ApplyMessageFilter();
+            SetStatus("附件已换好。");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "换附件失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OnBubbleDetails(object sender, RoutedEventArgs e)
+    {
+        ShowDetails();
+        switch (BubbleOf(sender)?.Source)
+        {
+            case WeChatMessage message: FillEditor(message); break;
+            case WorkspaceMessage workspaceMessage: FillEditor(workspaceMessage); break;
+            case MessagePreview preview: FillEditor(preview); break;
+        }
+    }
+
     private void SetEmptyState(bool visible) =>
         EmptyState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1196,9 +1340,15 @@ public partial class MainWindow : Window
                 FillEditor(edited);
                 SetEditorMode(edited.CanEdit, edited.IsTransaction);
                 SetEditorGroup(edited.Kind);
+                // Tapping a message opens its in-place editor, like WeChat.
+                if (MessageList.SelectedItem is ChatBubble selected && edited.CanEdit)
+                {
+                    selected.EditText = edited.Content;
+                    selected.IsEditing = true;
+                }
                 UpdateGuideHint(edited.IsTransaction
-                    ? "这条是交易类记录，可以改；请只填真实发生过的内容，改完点【保存修改】。"
-                    : "直接在右边改内容或附件，改完点【保存修改】。");
+                    ? "这条是交易类记录，可以直接改；请只填真实发生过的内容。"
+                    : "直接在这个气泡里改，改完点【保存】。");
                 break;
             case MessagePreview preview:
                 FillEditor(preview);
@@ -1241,16 +1391,17 @@ public partial class MainWindow : Window
             attachment = await _workspaceMedia.ImportAsync(_workspace, dialog.FileName);
         }
 
-        var message = _workspaceService.AddMessage(_workspace, kind, content, attachment);
+        var message = _workspaceService.AddMessage(
+            _workspace, kind, content, attachment, null,
+            ComposerSendsOutgoing, ComposerSender);
+        await AutoSaveWorkspaceAsync();
         MessageFilter.SelectedIndex = 0;
         ApplyMessageFilter();
         MessageList.Items.Refresh();
-        if (MessageList.ItemsSource is IEnumerable<ChatBubble> bubbles)
-            MessageList.SelectedItem = bubbles.FirstOrDefault(x => ReferenceEquals(x.Source, message));
-        if (MessageList.SelectedItem is not null) MessageList.ScrollIntoView(MessageList.SelectedItem);
+        SelectBubbleFor(message);
         AddLog($"Workspace message added: {kind}, id={message.LocalId}.");
-        SetStatus("已添加一条记录。在右边把内容改好，再点【保存修改】。");
-        UpdateGuideHint("新记录已加好：右边改内容 → 点【保存修改】。");
+        SetStatus("已添加一条记录。点它就能就地改内容。");
+        UpdateGuideHint("新记录已加好：点这条气泡就能直接改内容。");
     }
 
     private async void OnAddText(object sender, RoutedEventArgs e) =>

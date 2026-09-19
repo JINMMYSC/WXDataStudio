@@ -30,7 +30,9 @@ public sealed class WorkspaceService
         MessageKind kind,
         string content,
         string? attachment = null,
-        DateTimeOffset? when = null)
+        DateTimeOffset? when = null,
+        bool isOutgoing = true,
+        string sender = "")
     {
         if (!MessageKindPolicy.IsEditable(kind))
             throw new InvalidOperationException("This message type cannot be created in a workspace.");
@@ -43,7 +45,9 @@ public sealed class WorkspaceService
             kind,
             (when ?? DateTimeOffset.Now).ToUnixTimeSeconds(),
             content,
-            attachment);
+            attachment,
+            isOutgoing,
+            sender);
         workspace.Messages.Add(message);
         workspace.Messages.Sort((a, b) =>
         {
@@ -58,6 +62,40 @@ public sealed class WorkspaceService
             After = kind.ToString()
         });
         return message;
+    }
+
+    /// <summary>
+    /// Removes a message from the conversation. Messages added in this session
+    /// disappear immediately; messages that came from the phone are flagged so
+    /// the write-back deletes them.
+    /// </summary>
+    public bool Delete(WorkspaceDocument workspace, long messageId)
+    {
+        var message = workspace.Messages.FirstOrDefault(x => x.LocalId == messageId);
+        if (message is null) return false;
+        if (message.IsNew)
+        {
+            workspace.Audit.Add(new WorkspaceAuditEntry
+            {
+                MessageId = message.LocalId,
+                Field = "delete-new",
+                Before = message.Kind.ToString(),
+                After = ""
+            });
+            workspace.Messages.Remove(message);
+            return true;
+        }
+
+        if (message.IsDeleted) return false;
+        message.IsDeleted = true;
+        workspace.Audit.Add(new WorkspaceAuditEntry
+        {
+            MessageId = message.LocalId,
+            Field = "delete",
+            Before = message.Content,
+            After = ""
+        });
+        return true;
     }
 
     public void EditContent(WorkspaceDocument workspace, long messageId, string newContent)

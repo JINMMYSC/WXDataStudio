@@ -14,6 +14,8 @@ public sealed class WorkspaceMessage
     /// <summary>Transaction-class record: labelled in the UI, still editable.</summary>
     public bool IsTransaction { get; init; }
     public bool IsNew { get; init; }
+    /// <summary>Marked for removal: the write-back deletes this row on the phone.</summary>
+    public bool IsDeleted { get; set; }
     public string OriginalContent { get; init; } = "";
     public long OriginalCreateTime { get; init; }
     public string? OriginalAttachment { get; init; }
@@ -23,6 +25,7 @@ public sealed class WorkspaceMessage
 
     public bool IsDirty => IsNew || Content != OriginalContent || CreateTime != OriginalCreateTime ||
                            !string.Equals(Attachment, OriginalAttachment, StringComparison.Ordinal);
+    public bool IsRemoved => IsDeleted && !IsNew;
     public bool CanEdit => MessageKindPolicy.IsEditable(Kind);
     public string DisplayTime => SafeFormatTime(CreateTime);
     public string Direction => IsOutgoing ? "我发送" : "对方发送";
@@ -57,11 +60,19 @@ public sealed class WorkspaceMessage
     };
 
     public static WorkspaceMessage CreateNew(
-        long localId, string conversationId, MessageKind kind, long createTime, string content, string? attachment) => new()
+        long localId,
+        string conversationId,
+        MessageKind kind,
+        long createTime,
+        string content,
+        string? attachment,
+        bool isOutgoing = true,
+        string sender = "") => new()
     {
         LocalId = localId,
         ConversationId = conversationId,
-        IsOutgoing = true,
+        IsOutgoing = isOutgoing,
+        Sender = sender,
         Kind = kind,
         IsTransaction = MessageKindPolicy.IsTransaction(kind),
         IsNew = true,

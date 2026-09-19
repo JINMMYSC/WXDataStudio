@@ -73,7 +73,8 @@ public sealed class PhoneRestoreService
 
             var write = await _writer.ApplyAsync(editedPlain, request.Workspace, cancellationToken);
             Step("apply-workspace", true,
-                $"updated={write.Updated}, inserted={write.Inserted}, warnings={write.Warnings.Count}");
+                $"updated={write.Updated}, inserted={write.Inserted}, deleted={write.Deleted}, " +
+                $"warnings={write.Warnings.Count}");
 
             var plainIntegrity = await WorkspaceDatabaseWriter.IntegrityCheckAsync(
                 editedPlain, cancellationToken);
@@ -231,6 +232,12 @@ public sealed class PhoneRestoreService
             if (expected.IsNew)
             {
                 if (messages.Any(x => x.Content == expected.Content)) verified++;
+                continue;
+            }
+            if (expected.IsDeleted)
+            {
+                // A deletion is verified when the row is gone from the phone.
+                if (messages.All(x => x.LocalId != expected.LocalId)) verified++;
                 continue;
             }
             if (byId.TryGetValue(expected.LocalId, out var actual) &&

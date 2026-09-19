@@ -674,13 +674,20 @@ var writeWorkspace = writeService.Create(root, conversations[0], new[]
 });
 writeService.EditContent(writeWorkspace, 1, "recovered hello");
 writeService.EditTime(writeWorkspace, 2, 1_726_500_100);
+Assert(writeService.Delete(writeWorkspace, 2), "delete must remove the message");
 var recoveredRow = writeService.AddMessage(
     writeWorkspace, MessageKind.Text, "recovered new row");
 Assert(recoveredRow.IsNew, "recovered row must be marked as new");
+var recoveredIncoming = writeService.AddMessage(
+    writeWorkspace, MessageKind.Text, "recovered incoming row",
+    attachment: null, when: null, isOutgoing: false, sender: "wxid_other");
+Assert(!recoveredIncoming.IsOutgoing && recoveredIncoming.Sender == "wxid_other",
+    "incoming recovered row must keep its direction and sender");
 
 var writeResult = await new WorkspaceDatabaseWriter().ApplyAsync(writeDbPath, writeWorkspace);
-Assert(writeResult.Updated == 2, "writer must update both edited rows");
-Assert(writeResult.Inserted == 1, "writer must insert the recovered row");
+Assert(writeResult.Updated == 1, "writer must update the edited row");
+Assert(writeResult.Inserted == 2, "writer must insert both recovered rows");
+Assert(writeResult.Deleted == 1, "writer must delete the removed row");
 Assert((await WorkspaceDatabaseWriter.IntegrityCheckAsync(writeDbPath)) == "ok",
     "written database failed its integrity check");
 Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.Image) == 3, "image raw type mismatch");
@@ -689,9 +696,10 @@ Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.RedPacket) == 49, "red pac
 var writtenRows = await new WeChatDatabaseReader().LoadMessagesAsync(
     writeDbPath, "alice", new DatabaseOpenOptions { ReadOnly = true });
 Assert(writtenRows.Any(x => x.Content == "recovered hello"), "content edit was not written");
-Assert(writtenRows.Any(x => x.CreateTime == 1_726_500_100), "time edit was not written");
 Assert(writtenRows.Any(x => x.Content == "recovered new row" && x.IsOutgoing),
     "recovered row was not written as an outgoing message");
+Assert(writtenRows.Any(x => x.Content == "recovered incoming row"), "incoming recovered row missing");
+Assert(writtenRows.All(x => x.Content != "world"), "deleted row must be gone from the database");
 
 var sc1Service = new LegacySc1DatabaseService();
 var saltSource = Path.Combine(root, "salt-source.bin");

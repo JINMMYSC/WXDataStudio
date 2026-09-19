@@ -7,6 +7,7 @@ public sealed record WorkspaceWriteResult(
     string DatabasePath,
     int Updated,
     int Inserted,
+    int Deleted,
     IReadOnlyList<string> Warnings);
 
 /// <summary>
@@ -63,10 +64,21 @@ public sealed class WorkspaceDatabaseWriter
 
         var updated = 0;
         var inserted = 0;
+        var deleted = 0;
         var existing = workspace.Messages.Where(x => !x.IsNew).ToArray();
         foreach (var message in existing)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (message.IsDeleted)
+            {
+                await using var deleteCommand = connection.CreateCommand();
+                deleteCommand.CommandText =
+                    $"DELETE FROM {Q(table)} WHERE {Q(idColumn)}=$id";
+                deleteCommand.Parameters.AddWithValue("$id", message.LocalId);
+                deleted += await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+                continue;
+            }
+
             var assignments = new List<string>();
             await using var command = connection.CreateCommand();
             if (contentColumn is not null && message.Content != message.OriginalContent)
@@ -151,7 +163,7 @@ public sealed class WorkspaceDatabaseWriter
             inserted += await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        return new WorkspaceWriteResult(databasePath, updated, inserted, warnings);
+        return new WorkspaceWriteResult(databasePath, updated, inserted, deleted, warnings);
     }
 
     /// <summary>Runs SQLite's integrity check on the written database.</summary>
