@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly MessageCensusService _messageCensus = new();
     private readonly ChatExportService _chatExport = new();
     private readonly MediaLocatorService _mediaLocator;
+    private readonly MediaCacheService _mediaCache;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
     private DeviceInfo? _device;
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _snapshots = new SnapshotService(_adb);
         _mediaLocator = new MediaLocatorService(_adb);
+        _mediaCache = new MediaCacheService(_adb, _mediaLocator);
         _legacyKeyCandidates = new LegacyWeChatKeyCandidateService(_adb);
         _credentialResolver = new DatabaseCredentialResolver(_dbReader, _legacyKeyCandidates);
         LogList.ItemsSource = _logs;
@@ -247,6 +249,100 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Transfer / red packet / payment entry with amount and note fields.</summary>
+    private void OnToggleEmoji(object sender, RoutedEventArgs e)
+    {
+        if (EmojiPanel.Children.Count == 0)
+        {
+            foreach (var glyph in CommonEmoji)
+            {
+                var button = new Button
+                {
+                    Content = glyph,
+                    Width = 34,
+                    Height = 34,
+                    Margin = new Thickness(2),
+                    FontSize = 18,
+                    Tag = glyph
+                };
+                button.Click += OnEmojiPicked;
+                EmojiPanel.Children.Add(button);
+            }
+        }
+        EmojiPopup.IsOpen = !EmojiPopup.IsOpen;
+    }
+
+    private static readonly string[] CommonEmoji =
+    {
+        "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣",
+        "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰",
+        "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜",
+        "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏",
+        "😒", "😞", "😔", "😟", "😕", "🙁", "😣", "😖",
+        "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡",
+        "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰",
+        "😥", "😓", "🤗", "🤔", "🤭", "🤫", "🤥", "😶",
+        "👍", "👎", "👌", "✌", "🤞", "🤝", "🙏", "👏",
+        "💪", "🎉", "🎁", "🧧", "💰", "❤", "💔", "🌹",
+        "🌷", "☀", "🌙", "⭐", "🔥", "💯", "✅", "❌",
+        "🙈", "🙉", "🙊", "🐶", "🐱", "🐭", "🐹", "🐰"
+    };
+
+    private void OnEmojiPicked(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is not string glyph) return;
+        var caret = ComposerBox.CaretIndex;
+        ComposerBox.Text = ComposerBox.Text.Insert(caret, glyph);
+        ComposerBox.CaretIndex = caret + glyph.Length;
+        ComposerBox.Focus();
+        EmojiPopup.IsOpen = false;
+    }
+
+    /// <summary>Turns the selected message into a fresh record the user can edit.</summary>
+    private async void OnCopySelected(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        if (_workspace is null || SelectedWorkspaceMessage is not { } source)
+        {
+            SetStatus("先在中间点一条消息，再点【复制选中的那条】。");
+            return;
+        }
+
+        var copy = await CopyMessageAsync(source);
+        if (copy is null) return;
+        SetStatus("已复制成一条新记录，改内容或金额后再点【写回手机】。");
+        UpdateGuideHint("复制好了：直接改这条新记录，然后点【写回手机】。");
+    }
+
+    private async void OnBubbleCopy(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        if (BubbleOf(sender) is not { } bubble ||
+            bubble.Source is not WorkspaceMessage message || _workspace is null)
+            return;
+        var copy = await CopyMessageAsync(message);
+        if (copy is null) return;
+        SetStatus("已复制成一条新记录，改内容或金额后再点【写回手机】。");
+    }
+
+    private async Task<WorkspaceMessage?> CopyMessageAsync(WorkspaceMessage source)
+    {
+        if (_workspace is null) return null;
+        var copy = _workspaceService.AddMessage(
+            _workspace,
+            source.Kind,
+            source.Content,
+            source.Attachment,
+            null,
+            source.IsOutgoing,
+            source.Sender);
+        await AutoSaveWorkspaceAsync();
+        MessageFilter.SelectedIndex = 0;
+        ApplyMessageFilter();
+        SelectBubbleFor(copy);
+        UpdateWriteBackState();
+        return copy;
+    }
+
     private async void OnAddMoneyMessage(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
@@ -851,7 +947,29 @@ public partial class MainWindow : Window
             }
 
             SetStatus("正在给手机上的记录做只读备份（会先暂停微信）…");
-            var snapshot = await _snapshots.CreateDatabaseSnapshotAsync(_device, AddLog);
+            // WeChat writes to its WAL while it starts up, so a single attempt can
+            // legitimately fail the consistency check; retry a couple of times.
+            SnapshotResult? snapshot = null;
+            Exception? lastError = null;
+            for (var attempt = 1; attempt <= 3 && snapshot is null; attempt++)
+            {
+                try
+                {
+                    snapshot = await _snapshots.CreateDatabaseSnapshotAsync(_device, AddLog);
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    AddLog($"Snapshot attempt {attempt} failed: {ex.Message}");
+                    if (attempt < 3)
+                    {
+                        SetStatus($"微信正在写数据，正在重试（第 {attempt + 1} 次）…");
+                        await Task.Delay(TimeSpan.FromSeconds(5));
+                    }
+                }
+            }
+            if (snapshot is null)
+                throw lastError ?? new InvalidOperationException("读取手机失败，请稍后重试。");
             _latestSnapshotDirectory = snapshot.DirectoryPath;
             var item = await _snapshotCatalog.InspectDirectoryAsync(snapshot.DirectoryPath);
             if (item is not null && item.IsUsable) SelectSnapshot(item);
@@ -1397,8 +1515,11 @@ public partial class MainWindow : Window
                     workspaceRoot, _latestSnapshotDirectory, conversation.Username);
                 if (saved is not null)
                 {
-                    _workspace = saved;
-                    AddLog($"Restored saved edits for {conversation.EffectiveName}.");
+                    // Rebase so pending edits survive a fresh read of the phone.
+                    _workspace = _workspaceService.Rebase(
+                        saved, _latestSnapshotDirectory ?? "", conversation, _currentMessages);
+                    var pendingCount = _diffService.GetDiffs(_workspace).Count;
+                    AddLog($"Rebased saved edits for {conversation.EffectiveName}: {pendingCount} change(s).");
                 }
                 else
                 {
@@ -1557,6 +1678,18 @@ public partial class MainWindow : Window
                         var media = await _mediaLocator.ResolveAsync(_device, message);
                         PropertyAttachment.Text = media.Summary;
                         MediaOriginalPath.Text = media.Candidates.FirstOrDefault()?.RemotePath ?? message.ImgPath ?? "";
+                        // Show pictures that only exist on the phone by pulling them
+                        // into a local cache; otherwise the bubble stays text-only.
+                        if (message.Kind is MessageKind.Image or MessageKind.Emoji &&
+                            MessageList.SelectedItem is ChatBubble bubble)
+                        {
+                            var local = await _mediaCache.FetchAsync(_device, message);
+                            if (local is not null)
+                            {
+                                bubble.LocalImagePath = local;
+                                bubble.AttachmentNote = "";
+                            }
+                        }
                     }
                     catch (Exception ex) { AddLog($"Media resolve failed: {ex.Message}"); }
                 }

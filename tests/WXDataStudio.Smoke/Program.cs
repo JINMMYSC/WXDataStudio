@@ -841,6 +841,30 @@ Assert(reloadedWorkspace.Messages.Any(x => x.IsDeleted),
 Assert(reloadedWorkspace.Messages.Count(x => x.IsNew) == 2,
     "recovered rows did not survive a reload");
 
+// Reading the phone again produces a new snapshot; pending edits must be rebased
+// onto the fresh messages instead of being dropped.
+var rebaseSaved = writeService.Create("old-snapshot", conversations[0], new[]
+{
+    new WeChatMessage { LocalId = 1, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_000, Content = "hello" },
+    new WeChatMessage { LocalId = 2, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_100, Content = "world" }
+});
+writeService.EditContent(rebaseSaved, 1, "rebased hello");
+writeService.Delete(rebaseSaved, 2);
+writeService.AddMessage(rebaseSaved, MessageKind.Text, "rebased new row");
+var rebased = writeService.Rebase(rebaseSaved, "new-snapshot", conversations[0], new[]
+{
+    new WeChatMessage { LocalId = 1, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_000, Content = "hello" },
+    new WeChatMessage { LocalId = 2, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_100, Content = "world" },
+    new WeChatMessage { LocalId = 3, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_200, Content = "arrived on the phone" }
+});
+Assert(rebased.SourceSnapshotDirectory == "new-snapshot", "rebase must point at the new snapshot");
+Assert(rebased.Messages.Single(x => x.LocalId == 1).Content == "rebased hello",
+    "rebase lost a content edit");
+Assert(rebased.Messages.Single(x => x.LocalId == 2).IsDeleted, "rebase lost a deletion");
+Assert(rebased.Messages.Count(x => x.IsNew) == 1, "rebase lost the recovered row");
+Assert(rebased.Messages.Any(x => x.LocalId == 3 && x.Content == "arrived on the phone"),
+    "rebase must keep messages that arrived on the phone");
+
 var sc1Service = new LegacySc1DatabaseService();
 var saltSource = Path.Combine(root, "salt-source.bin");
 var saltBytes = new byte[1024];

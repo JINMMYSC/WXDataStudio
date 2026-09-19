@@ -46,7 +46,9 @@
                     <StackPanel>
                         <TextBlock Text="第 3 步 · 补一条被删掉的记录" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
-                                   Text="聊天底部有一个输入框，和微信一样：打完字点【发送】，这条记录就加进聊天里了。左边可以选这条算【我发送】还是【对方发送】。"/>
+                                   Text="聊天底部的输入栏和微信一样：上面一行是【表情】【图片】【转账】【红包】【更多】，下面选【我发送】还是【对方发送】，中间打字，右边【发送】。表情点开直接选。"/>
+                        <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#6A737D"
+                                   Text="想照着一條已有记录补新的：点那条记录 → 点【复制一条】（或输入栏的【用已有记录 → 复制选中的那条】），它变成一条新记录，改内容或金额即可。"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#6A737D"
                                    Text="要补图片、语音、文件、表情、位置、名片、链接，点输入框左边的【＋】选类型，再从电脑里挑文件。"/>
                     </StackPanel>

@@ -38,11 +38,39 @@ public sealed class ChatBubble : INotifyPropertyChanged
     }
     public string KindLabel { get; init; } = "";
     public bool IsTransaction { get; init; }
+    public bool IsTransfer { get; init; }
+    public bool IsRedPacket { get; init; }
+    public bool IsPayment { get; init; }
+    public string CardTitle { get; init; } = "";
+    public string CardAmount { get; init; } = "";
+    public string CardStatus { get; init; } = "";
+    public bool HasCardAmount => !string.IsNullOrWhiteSpace(CardAmount);
+    public bool HasCardStatus => !string.IsNullOrWhiteSpace(CardStatus);
     public bool IsNew { get; init; }
     public bool IsDirty { get; init; }
     public bool IsDeleted { get; set; }
-    public string? LocalImagePath { get; init; }
-    public string AttachmentNote { get; init; } = "";
+    private string? _localImagePath;
+    public string? LocalImagePath
+    {
+        get => _localImagePath;
+        set
+        {
+            _localImagePath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasLocalImage));
+        }
+    }
+    private string _attachmentNote = "";
+    public string AttachmentNote
+    {
+        get => _attachmentNote;
+        set
+        {
+            _attachmentNote = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasAttachmentNote));
+        }
+    }
     public bool HasLocalImage => !string.IsNullOrWhiteSpace(LocalImagePath);
     public bool HasAttachmentNote => !string.IsNullOrWhiteSpace(AttachmentNote);
     public bool HasKindLabel => !string.IsNullOrWhiteSpace(KindLabel);
@@ -120,6 +148,12 @@ public sealed class ChatBubble : INotifyPropertyChanged
         KindLabel = KindLabelFor(message.Kind),
         Body = ChatExportService.Describe(message),
         IsTransaction = message.IsTransaction,
+        IsTransfer = message.Kind == MessageKind.Transfer,
+        IsRedPacket = message.Kind == MessageKind.RedPacket,
+        IsPayment = message.Kind == MessageKind.Payment,
+        CardTitle = CardTitleFor(message.Kind),
+        CardAmount = TransactionMessageTemplate.Read(message.Kind, message.Content).Amount,
+        CardStatus = TransactionMessageTemplate.Read(message.Kind, message.Content).Status,
         LocalImagePath = LocalImage(message.Kind, message.ImgPath),
         AttachmentNote = AttachmentNoteFor(message.Kind, message.ImgPath)
     };
@@ -146,6 +180,12 @@ public sealed class ChatBubble : INotifyPropertyChanged
             IsOutgoing = message.IsOutgoing
         }),
         IsTransaction = message.IsTransaction,
+        IsTransfer = message.Kind == MessageKind.Transfer,
+        IsRedPacket = message.Kind == MessageKind.RedPacket,
+        IsPayment = message.Kind == MessageKind.Payment,
+        CardTitle = CardTitleFor(message.Kind),
+        CardAmount = TransactionMessageTemplate.Read(message.Kind, message.Content).Amount,
+        CardStatus = TransactionMessageTemplate.Read(message.Kind, message.Content).Status,
         IsNew = message.IsNew,
         IsDirty = message.IsDirty,
         IsDeleted = message.IsDeleted,
@@ -161,6 +201,14 @@ public sealed class ChatBubble : INotifyPropertyChanged
     private static string KindLabelFor(MessageKind kind) => kind switch
     {
         MessageKind.Text => "",
+        _ => kind.ToString()
+    };
+
+    private static string CardTitleFor(MessageKind kind) => kind switch
+    {
+        MessageKind.Transfer => "转账",
+        MessageKind.RedPacket => "微信红包",
+        MessageKind.Payment => "收付款",
         _ => kind.ToString()
     };
 
