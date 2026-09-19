@@ -107,6 +107,21 @@ var miniMeta = MessageMetadataParser.Parse(MessageKind.MiniProgram, miniXml);
 Assert(miniMeta.MiniProgramUserName == "gh_demo@app", "mini program username parse mismatch");
 Assert(miniMeta.MiniProgramPath == "pages/home", "mini program path parse mismatch");
 
+const string flaggedLinkXml = "<msg><appmsg><type>5</type><appattach><fileext></fileext></appattach></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(285212721, flaggedLinkXml) == MessageKind.Link,
+    "flagged app-message link classification mismatch");
+const string finderShareXml = "<msg><appmsg><type>51</type><finder_feed/><appattach><fileext></fileext></appattach></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(754974769, finderShareXml) == MessageKind.Link,
+    "finder share must not be classified as a file attachment");
+const string flaggedFileXml = "<msg><appmsg><type>6</type><title>report.pdf</title><appattach><fileext>pdf</fileext><md5>00112233445566778899aabbccddeeff</md5></appattach></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(285212721, flaggedFileXml) == MessageKind.File,
+    "flagged app-message file classification mismatch");
+Assert(MessageTypeClassifier.Classify(285212714, "<msg/>") == MessageKind.ContactCard,
+    "flagged fallback message type must use the normalized type");
+const string flaggedTransferXml = "<msg><appmsg><type>2000</type><wcpayinfo><paysubtype>1</paysubtype></wcpayinfo></appmsg></msg>";
+Assert(MessageTypeClassifier.Classify(285212721, flaggedTransferXml) == MessageKind.Transfer,
+    "flagged transfer message must remain read-only classified");
+
 Assert(!MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer must stay read-only");
 Assert(!MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet must stay read-only");
 Assert(MessageKindPolicy.IsEditable(MessageKind.Text), "text should be editable in workspace");
@@ -127,6 +142,43 @@ var unsafeMediaDevice = mediaDevice with { AccountDirectory = "bad';id" };
 Assert(!MediaLocatorService.GetSearchLocations(unsafeMediaDevice, MessageKind.Image)
         .Any(x => x.RequiresRoot),
     "unsafe device-provided account directories must never enter root shell commands");
+var fileSearchLocations = MediaLocatorService.GetSearchLocations(mediaDevice, MessageKind.File);
+Assert(fileSearchLocations.Any(x =>
+        x.Directory == "/sdcard/Android/data/com.tencent.mm/MicroMsg/Download"),
+    "file search must include the shared WeChat download directory");
+Assert(fileSearchLocations.Any(x => x.Directory == "/sdcard/Download/WeiXin"),
+    "file search must include the user-visible WeChat download directory");
+var fileTokenMessage = new WeChatMessage
+{
+    Kind = MessageKind.File,
+    Content = "<msg><appmsg><title>report.pdf</title><appattach><md5>00112233445566778899aabbccddeeff</md5></appattach></appmsg></msg>"
+};
+var fileTokens = MediaLocatorService.GetSearchTokens(fileTokenMessage);
+Assert(fileTokens.Contains("00112233445566778899aabbccddeeff"),
+    "file media tokens must include the attachment MD5");
+Assert(!fileTokens.Contains("report"),
+    "file media tokens must prefer MD5 over a broad filename fallback");
+var titleOnlyFileTokenMessage = new WeChatMessage
+{
+    Kind = MessageKind.File,
+    Content = "<msg><appmsg><title>report.pdf</title></appmsg></msg>"
+};
+Assert(MediaLocatorService.GetSearchTokens(titleOnlyFileTokenMessage).Contains("report"),
+    "file media tokens must use the filename when no valid MD5 exists");
+var unsafeFileTokenMessage = new WeChatMessage
+{
+    Kind = MessageKind.File,
+    Content = "<msg><appmsg><title>a.pdf</title><appattach><md5>0</md5></appattach></appmsg></msg>"
+};
+Assert(MediaLocatorService.GetSearchTokens(unsafeFileTokenMessage).Count == 0,
+    "short or malformed attachment identifiers must not trigger broad searches");
+var encodedFileTokenMessage = new WeChatMessage
+{
+    Kind = MessageKind.File,
+    Content = "<msg><appmsg><title><![CDATA[annual &amp; tax.pdf]]></title></appmsg></msg>"
+};
+Assert(MediaLocatorService.GetSearchTokens(encodedFileTokenMessage).Contains("annual & tax"),
+    "file title tokens must decode entities and preserve safe spaces");
 
 var sourceFingerprint = new DeviceFileFingerprint(8192, "aabbcc");
 Assert(sourceFingerprint.Matches(new DeviceFileFingerprint(8192, "AABBCC")),

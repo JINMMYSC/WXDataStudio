@@ -1,5 +1,7 @@
 using System.IO;
 using System.Collections.Concurrent;
+using System.Net;
+using System.Text.RegularExpressions;
 using WXDataStudio.App.Models;
 
 namespace WXDataStudio.App.Services;
@@ -7,51 +9,85 @@ namespace WXDataStudio.App.Services;
 public sealed class MediaLocatorService
 {
     private readonly AdbService _adb;
-    private readonly ConcurrentDictionary<MediaCacheKey, MediaResolution> _cache = new();
+    private readonly ConcurrentDictionary<MediaCacheKey, Lazy<Task<MediaResolution>>> _cache = new();
+    private readonly SemaphoreSlim _searchGate = new(2, 2);
 
     public MediaLocatorService(AdbService adb)
     {
         _adb = adb;
     }
 
-    public async Task<MediaResolution> ResolveAsync(DeviceInfo device, WeChatMessage message)
+    public Task<MediaResolution> ResolveAsync(DeviceInfo device, WeChatMessage message)
     {
+        var tokens = GetSearchTokens(message);
         var cacheKey = new MediaCacheKey(
             device.Serial,
             device.AccountDirectory,
             device.ExternalAccountDirectory,
             message.Kind,
             message.LocalId,
-            message.ImgPath);
-        if (_cache.TryGetValue(cacheKey, out var cached)) return cached;
-        if (string.IsNullOrWhiteSpace(message.ImgPath))
-            return Cache(cacheKey, new MediaResolution { MessageId = message.LocalId, Kind = message.Kind });
+            string.Join('\u001f', tokens));
+        var lazy = _cache.GetOrAdd(cacheKey, _ => new Lazy<Task<MediaResolution>>(
+            () => ResolveCoreAsync(device, message, tokens),
+            LazyThreadSafetyMode.ExecutionAndPublication));
+        return AwaitCachedAsync(cacheKey, lazy);
+    }
 
-        var token = SanitizeToken(message.ImgPath);
-        if (string.IsNullOrWhiteSpace(token))
-            return Cache(cacheKey, new MediaResolution { MessageId = message.LocalId, Kind = message.Kind });
+    private async Task<MediaResolution> AwaitCachedAsync(
+        MediaCacheKey cacheKey, Lazy<Task<MediaResolution>> lazy)
+    {
+        try
+        {
+            return await lazy.Value;
+        }
+        catch
+        {
+            _cache.TryRemove(new KeyValuePair<MediaCacheKey, Lazy<Task<MediaResolution>>>(
+                cacheKey, lazy));
+            throw;
+        }
+    }
 
-        var found = new List<MediaCandidate>();
-        foreach (var location in GetSearchLocations(device, message.Kind))
-            found.AddRange(await SearchFolderAsync(location, token));
+    private async Task<MediaResolution> ResolveCoreAsync(
+        DeviceInfo device,
+        WeChatMessage message,
+        IReadOnlyList<string> tokens)
+    {
+        if (tokens.Count == 0)
+            return new MediaResolution { MessageId = message.LocalId, Kind = message.Kind };
 
-        return Cache(cacheKey, new MediaResolution
+        var searches = GetSearchLocations(device, message.Kind)
+            .Select(location => SearchFolderAsync(location, tokens));
+        var found = (await Task.WhenAll(searches)).SelectMany(x => x).ToArray();
+
+        return new MediaResolution
         {
             MessageId = message.LocalId,
             Kind = message.Kind,
             Candidates = found.DistinctBy(x => x.RemotePath).Take(20).ToArray()
-        });
+        };
     }
 
     private async Task<IEnumerable<MediaCandidate>> SearchFolderAsync(
-        MediaSearchLocation location, string token)
+        MediaSearchLocation location, IReadOnlyList<string> tokens)
     {
-        var quoted = token.Replace("'", "", StringComparison.Ordinal);
+        static string Q(string value) =>
+            "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+        var patterns = string.Join(" -o ", tokens.Select(token => $"-iname {Q($"*{token}*")}"));
         var command =
-            $"find '{location.Directory}' -type f -iname '*{quoted}*' 2>/dev/null | head -n 8";
-        var result = location.RequiresRoot
-            ? await _adb.RootShellAsync(command)
-            : await _adb.ShellAsync(command);
+            $"find {Q(location.Directory)} -type f \\( {patterns} \\) 2>/dev/null | head -n 8";
+        await _searchGate.WaitAsync();
+        CommandResult result;
+        try
+        {
+            result = location.RequiresRoot
+                ? await _adb.RootShellAsync(command)
+                : await _adb.ShellAsync(command);
+        }
+        finally
+        {
+            _searchGate.Release();
+        }
         if (!result.Success && string.IsNullOrWhiteSpace(result.StdOut))
             return Array.Empty<MediaCandidate>();
         return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
@@ -69,11 +105,60 @@ public sealed class MediaLocatorService
         if (IsSafeAccountDirectory(device.ExternalAccountDirectory))
             roots.Add((device.ExternalMediaRoot, false));
 
-        return roots
+        var locations = roots
             .SelectMany(root => FoldersFor(kind).Select(folder =>
                 new MediaSearchLocation($"{root.Path}/{folder}", folder, root.RequiresRoot)))
-            .DistinctBy(x => x.Directory, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (kind == MessageKind.File)
+        {
+            locations.Add(new MediaSearchLocation(
+                "/sdcard/Android/data/com.tencent.mm/MicroMsg/Download", "Download", false));
+            locations.Add(new MediaSearchLocation(
+                "/sdcard/Download/WeiXin", "Download", false));
+        }
+        return locations.DistinctBy(x => x.Directory, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    public static IReadOnlyList<string> GetSearchTokens(WeChatMessage message)
+    {
+        var tokens = new List<string>();
+
+        if (message.Kind == MessageKind.File)
+        {
+            if (!AddMd5Token(tokens, ReadXmlValue(message.Content, "md5")) &&
+                !AddGeneralToken(tokens, message.ImgPath ?? ""))
+                AddGeneralToken(tokens, ReadXmlValue(message.Content, "title"));
+        }
+        else
+        {
+            AddGeneralToken(tokens, message.ImgPath ?? "");
+            if (message.Kind == MessageKind.Emoji)
+            {
+                AddMd5Token(tokens, ReadXmlValue(message.Content, "md5"));
+                AddMd5Token(tokens, ReadXmlValue(message.Content, "newmd5"));
+            }
+        }
+
+        return tokens
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static bool AddMd5Token(List<string> tokens, string value)
+    {
+        var token = SanitizeToken(value);
+        if (token.Length != 32 || !token.All(Uri.IsHexDigit)) return false;
+        tokens.Add(token);
+        return true;
+    }
+
+    private static bool AddGeneralToken(List<string> tokens, string value)
+    {
+        var token = SanitizeToken(value);
+        if (token.Length < 3) return false;
+        tokens.Add(token);
+        return true;
     }
 
     private static bool IsSafeAccountDirectory(string value) =>
@@ -88,7 +173,7 @@ public sealed class MediaLocatorService
         MessageKind.Video => ["video"],
         MessageKind.Voice => ["voice2"],
         MessageKind.Emoji => ["emoji"],
-        MessageKind.File => ["Download", "download"],
+        MessageKind.File => ["attachment", "Download", "download"],
         _ => ["image2", "video", "voice2", "emoji"]
     };
 
@@ -97,13 +182,28 @@ public sealed class MediaLocatorService
         var value = input.Replace("THUMBNAIL_DIRPATH://", "", StringComparison.OrdinalIgnoreCase);
         value = value.Replace("th_", "", StringComparison.OrdinalIgnoreCase);
         value = Path.GetFileNameWithoutExtension(value.Trim());
-        return new string(value.Where(c => char.IsLetterOrDigit(c) || c is '_' or '-').ToArray());
+        return new string(value.Where(c =>
+            char.IsLetterOrDigit(c) || c is '_' or '-' or ' ' or '&').ToArray()).Trim();
     }
 
-    private MediaResolution Cache(MediaCacheKey key, MediaResolution value)
+    private static string ReadXmlValue(string content, string name)
     {
-        _cache[key] = value;
-        return value;
+        if (string.IsNullOrWhiteSpace(content)) return "";
+        var tag = Regex.Match(content,
+            $"<{Regex.Escape(name)}>(.*?)</{Regex.Escape(name)}>",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var value = tag.Success ? tag.Groups[1].Value.Trim() : "";
+        if (value.Length == 0)
+        {
+            var attribute = Regex.Match(content,
+                $"\\b{Regex.Escape(name)}\\s*=\\s*['\"]([^'\"]*)['\"]",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            value = attribute.Success ? attribute.Groups[1].Value.Trim() : "";
+        }
+        if (value.StartsWith("<![CDATA[", StringComparison.OrdinalIgnoreCase) &&
+            value.EndsWith("]]>", StringComparison.Ordinal))
+            value = value[9..^3];
+        return WebUtility.HtmlDecode(value).Trim();
     }
 
     private sealed record MediaCacheKey(
@@ -112,7 +212,7 @@ public sealed class MediaLocatorService
         string ExternalAccountDirectory,
         MessageKind Kind,
         long MessageId,
-        string? ImagePath);
+        string SearchTokenSignature);
 }
 
 public sealed record MediaSearchLocation(
