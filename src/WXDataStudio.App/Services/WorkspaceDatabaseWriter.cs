@@ -99,6 +99,12 @@ public sealed class WorkspaceDatabaseWriter
             }
             if (assignments.Count == 0) continue;
 
+            // WeChat re-syncs messages that carry a server id and would overwrite
+            // our edit with the server's copy. Clearing the id on this row makes
+            // WeChat treat the message as locally owned, so the edit sticks.
+            if (serverIdColumn is not null)
+                assignments.Add($"{Q(serverIdColumn)}=0");
+
             command.CommandText =
                 $"UPDATE {Q(table)} SET {string.Join(',', assignments)} WHERE {Q(idColumn)}=$id";
             command.Parameters.AddWithValue("$id", message.LocalId);

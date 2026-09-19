@@ -195,10 +195,11 @@ public sealed class PhoneRestoreService
                 return Failure("The database on the phone does not pass its integrity check.",
                     steps, working, deviceBackupPath);
 
-            var verified = await VerifyWorkspaceRowsAsync(
+            var (verified, failures) = await VerifyWorkspaceRowsAsync(
                 verifyPlain, request.Workspace, cancellationToken);
             Step("verify-content", verified == request.Workspace.Messages.Count,
-                $"verifiedRows={verified}/{request.Workspace.Messages.Count}");
+                $"verifiedRows={verified}/{request.Workspace.Messages.Count}" +
+                (failures.Count == 0 ? "" : "; not kept: " + string.Join(',', failures.Take(6))));
 
             var success = verified == request.Workspace.Messages.Count;
             return new PhoneRestoreResult(
@@ -218,7 +219,7 @@ public sealed class PhoneRestoreService
         }
     }
 
-    private async Task<int> VerifyWorkspaceRowsAsync(
+    private async Task<(int Verified, IReadOnlyList<string> Failures)> VerifyWorkspaceRowsAsync(
         string plaintextDatabasePath,
         WorkspaceDocument workspace,
         CancellationToken cancellationToken)
@@ -228,25 +229,30 @@ public sealed class PhoneRestoreService
             plaintextDatabasePath, workspace.ConversationId, options, 100000);
         var byId = messages.ToDictionary(x => x.LocalId);
         var verified = 0;
+        var failures = new List<string>();
         foreach (var expected in workspace.Messages)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (expected.IsNew)
             {
                 if (messages.Any(x => x.Content == expected.Content)) verified++;
+                else failures.Add($"{expected.Kind}#new");
                 continue;
             }
             if (expected.IsDeleted)
             {
                 // A deletion is verified when the row is gone from the phone.
                 if (messages.All(x => x.LocalId != expected.LocalId)) verified++;
+                else failures.Add($"{expected.Kind}#{expected.LocalId}(delete)");
                 continue;
             }
             if (byId.TryGetValue(expected.LocalId, out var actual) &&
                 actual.Content == expected.Content)
                 verified++;
+            else
+                failures.Add($"{expected.Kind}#{expected.LocalId}");
         }
-        return verified;
+        return (verified, failures);
     }
 
     private async Task<string> ReadOwnerAsync(string databasePath)

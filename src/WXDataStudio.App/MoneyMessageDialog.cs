@@ -29,8 +29,9 @@ public static class MoneyMessageDialog
 
         panel.Children.Add(new TextBlock
         {
-            Text = "这里改的是聊天里显示的文字。转账/红包点进去的“详情页”由微信服务器提供，" +
-                   "本地改不了，可能提示失败或仍显示原来的金额。",
+            Text = "重要：转账/红包记录由微信和服务器同步，本地改的文字随时可能被微信改回原样；" +
+                   "点进去的“详情页”也由微信服务器提供，本地改不了（可能提示失败或仍显示原金额）。" +
+                   "普通文字、图片、语音这类消息的修改可以正常保留。",
             TextWrapping = TextWrapping.Wrap,
             Foreground = System.Windows.Media.Brushes.DarkGoldenrod,
             Margin = new Thickness(0, 0, 0, 12)

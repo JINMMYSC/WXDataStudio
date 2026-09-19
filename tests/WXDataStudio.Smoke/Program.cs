@@ -760,6 +760,15 @@ Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.RedPacket) == 49, "red pac
 var writtenRows = await new WeChatDatabaseReader().LoadMessagesAsync(
     writeDbPath, "alice", new DatabaseOpenOptions { ReadOnly = true });
 Assert(writtenRows.Any(x => x.Content == "recovered hello"), "content edit was not written");
+using (var checkConnection = new SqliteConnection(
+    $"Data Source={writeDbPath};Mode=ReadOnly;Pooling=False"))
+{
+    await checkConnection.OpenAsync();
+    await using var check = checkConnection.CreateCommand();
+    check.CommandText = "SELECT msgSvrId FROM message WHERE msgId=1";
+    Assert(Convert.ToInt64(await check.ExecuteScalarAsync()) == 0,
+        "edited rows must have their server id cleared so WeChat keeps the edit");
+}
 Assert(writtenRows.Any(x => x.Content == "recovered new row" && x.IsOutgoing),
     "recovered row was not written as an outgoing message");
 Assert(writtenRows.Any(x => x.Content == "recovered incoming row"), "incoming recovered row missing");

@@ -93,6 +93,8 @@
                         <TextBlock TextWrapping="Wrap" Foreground="#6A737D" Text="读取用的是副本，不动手机原库；写回前会先备份原库，还能用【撤销这条修改】回退。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="改了转账/红包金额，点进去为什么提示失败？"/>
                         <TextBlock TextWrapping="Wrap" Foreground="#6A737D" Text="聊天里显示的金额是本地文字，可以改；但转账/红包的详情页由微信服务器提供，本地改不了，点进去会提示“当前使用人数过多”之类的信息。这是正常现象，不是软件坏了。"/>
+                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="改完过一会儿又变回原样？"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="#6A737D" Text="微信会按消息的服务器编号重新同步，把服务器上的版本写回本地。现在软件会把被修改那条消息的服务器编号清零，微信就把它当成本地消息，改动能保留住；写回后请重新打开微信里的那个聊天查看。"/>
                     </StackPanel>
                 </Border>
             </StackPanel>

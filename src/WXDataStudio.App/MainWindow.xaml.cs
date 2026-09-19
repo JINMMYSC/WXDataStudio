@@ -1173,8 +1173,8 @@ public partial class MainWindow : Window
                 $"消息：{_workspace.Messages.Count} 条\n" +
                 $"改动：{changes.Count} 项\n\n" +
                 (transactionChanges > 0
-                    ? $"其中 {transactionChanges} 条是交易类记录：聊天里显示的文字会同步，但转账/红包的详情页由微信服务器提供，" +
-                      "点进去可能提示失败或仍显示原来的金额。\n\n"
+                    ? $"其中 {transactionChanges} 条是交易类记录：这类记录由微信和服务器同步，" +
+                      "写回后可能被微信改回原样，详情页也仍显示服务器上的原金额。\n\n"
                     : "") +
                 "流程：生成加密数据库 → 手机侧备份原库 → 覆盖写入 → 修正权限 → 重启微信 → 回读校验。\n" +
                 "过程中微信会被强制停止。手机上的原库会以 .wxds-backup 前缀保留一份，可随时还原。\n\n" +
