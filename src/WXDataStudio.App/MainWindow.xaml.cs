@@ -71,26 +71,43 @@ public partial class MainWindow : Window
             var latest = await _snapshotCatalog.FindLatestUsableAsync();
             if (latest is null)
             {
-                DeviceBadge.Text = "离线模式 / 手机未连接";
-                SnapshotBadge.Text = "暂无可用本地快照";
+                DeviceBadge.Text = "手机未连接";
+                SnapshotBadge.Text = "";
                 DeviceIndicator.Fill = Brushes.Gray;
+                SetEmptyState(true);
+                SetStatus("还没有本地备份。连上手机点【读取微信记录】就能开始。");
                 AddLog("Offline mode ready. No usable local snapshot was found.");
                 if (!HasSeenGuide()) _ = Dispatcher.BeginInvoke(new Action(ShowGuide));
                 return;
             }
 
             SelectSnapshot(latest);
-            DeviceBadge.Text = "离线模式 / 可解析本地快照";
+            DeviceBadge.Text = "已找到电脑上的备份";
             DeviceIndicator.Fill = Brushes.DarkOrange;
-            ConversationList.ItemsSource = new[] { "本地快照已就绪 · 点击“解析快照”" };
+            ConversationList.ItemsSource = new[] { "电脑上已有备份 · 点【重新读取当前备份】" };
+            SetEmptyState(true);
+            SetStatus("电脑上已有备份，点中间区域的按钮或右上角【更多 → 重新读取当前备份】。");
             AddLog($"Offline snapshot ready: {latest.DirectoryPath}");
         }
         catch (Exception ex)
         {
-            SnapshotBadge.Text = "本地快照检查失败";
+            SnapshotBadge.Text = "备份检查失败";
             DeviceIndicator.Fill = Brushes.Gray;
+            SetStatus("本地备份检查失败：" + ex.Message);
             AddLog($"Offline snapshot initialization failed: {ex.Message}");
         }
+    }
+
+    private void SetStatus(string text) => StatusText.Text = text;
+
+    private void SetEmptyState(bool visible) =>
+        EmptyState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+    private void OnToggleLog(object sender, RoutedEventArgs e)
+    {
+        var show = LogToggle.IsChecked == true;
+        LogExpander.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        LogExpander.IsExpanded = show;
     }
 
     private void SelectSnapshot(SnapshotCatalogItem item)
@@ -150,16 +167,16 @@ public partial class MainWindow : Window
         }
 
         GuideHint.Text = _workspace is not null
-            ? "第 6-7 步：用 + 按钮新增消息；在列表里选中一条后在右侧修改，再点【保存工作副本】。"
+            ? "改内容：点中间一条消息 → 右边修改 → 【保存修改】；补记录用【＋ 添加消息】；完成后点【写回手机】。"
             : _currentConversation is not null
-                ? "第 5 步：点【工作副本】打开可编辑副本，之后即可新增或修改这个会话的聊天记录。"
+                ? "在中间点一条消息，右边就能修改。"
                 : !string.IsNullOrWhiteSpace(_currentDbPath)
-                    ? "第 4 步：在左侧【会话】列表点一个联系人或群。"
+                    ? "在左边点一个聊天，就能看到里面的消息。"
                     : !string.IsNullOrWhiteSpace(_latestSnapshotDirectory)
-                        ? "第 3 步：点【解析快照】打开数据库并读取会话。"
+                        ? "点【更多 → 重新读取当前备份】，把聊天读出来。"
                         : _device is not null
-                            ? "第 2 步：点【快照】建立本地只读快照。"
-                            : "第 1 步：点【设备】检查手机连接，再点【快照】建立本地只读快照。";
+                            ? "点【读取微信记录】，把手机上的聊天读到电脑上。"
+                            : "第 1 步：连接手机，点右上角【读取微信记录】。";
     }
 
     private async void OnSelectSnapshot(object sender, RoutedEventArgs e)
@@ -424,49 +441,114 @@ public partial class MainWindow : Window
         {
             _latestSnapshotDirectory ??= FindLatestSnapshotDirectory();
             if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
-                throw new InvalidOperationException("还没有可解析的快照，请先创建快照。");
-            var integrityIssues = await _integrity.CheckAsync(_latestSnapshotDirectory);
-            if (integrityIssues.Count > 0)
-                throw new InvalidDataException("快照完整性检查未通过：" + string.Join("；", integrityIssues));
-            var pristineDb = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
-            var info = await _dbInspector.InspectAsync(pristineDb);
-            AddLog($"DB inspect: {info.Status}; {info.Size:N0} bytes.");
-            AddLog($"DB header: {info.HeaderHex[..Math.Min(32, info.HeaderHex.Length)]}...");
-
-            var db = await OpenSnapshotDatabaseAsync(_latestSnapshotDirectory);
-            _currentDbPath = db;
-            var options = await ResolveDatabaseOptionsAsync(
-                db, info.AppearsEncrypted,
-                Path.Combine(_latestSnapshotDirectory, "derived"));
-            if (options is null)
-            {
-                AddLog("Automatic credential resolution did not open this WCDB snapshot.");
-                MessageBox.Show("已确认这是加密 WCDB。自动只读解析未能打开数据库。\n你可以点击“数据库密钥”输入已知的文本口令或 Raw Hex；密钥只保存在本次进程内存中。\n原库没有被修改。",
-                    "数据库仍为加密状态", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            _currentDbOptions = options;
-            var activeDb = _currentDbPath ?? db;
-            var schema = await _dbReader.DetectSchemaAsync(activeDb, options);
-            AddLog($"Schema: message={schema.MessageTable ?? "(none)"}; conversation={schema.ConversationTable ?? "(fallback)"}; contact={schema.ContactTable ?? "(none)"}.");
-            var conversations = await _dbReader.LoadConversationsAsync(activeDb, options);
-            _currentConversations = conversations;
-            ConversationList.ItemsSource = conversations;
-            _workspace = null;
-            _currentConversation = null;
-            _currentMessages = Array.Empty<WeChatMessage>();
-            SetAddButtonsEnabled(false);
-            AddLog($"Loaded {conversations.Count:N0} conversations from the snapshot.");
-            var postIssues = await _integrity.CheckAsync(_latestSnapshotDirectory);
-            AddLog(postIssues.Count == 0
-                ? "Snapshot stayed read-only: manifest, sizes and SHA-256 values still match."
-                : "WARNING: snapshot files changed during analysis: " + string.Join("; ", postIssues));
-            UpdateGuideHint();
+                throw new InvalidOperationException("还没有可读取的备份。请先点【读取微信记录】，或用【更多 → 选择电脑上的备份】。");
+            await LoadSnapshotAsync(_latestSnapshotDirectory);
         }
         catch (Exception ex)
         {
             AddLog($"Snapshot analysis failed: {ex.Message}");
-            MessageBox.Show(ex.Message, "解析失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetStatus("读取失败：" + ex.Message);
+            MessageBox.Show(ex.Message, "读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>
+    /// Reads a local backup: verify it, open the database read-only, load the
+    /// contact/chat list and show the chat view.
+    /// </summary>
+    private async Task LoadSnapshotAsync(string snapshotDirectory)
+    {
+        SetStatus("正在检查备份是否完整…");
+        var integrityIssues = await _integrity.CheckAsync(snapshotDirectory);
+        if (integrityIssues.Count > 0)
+            throw new InvalidDataException("备份文件不完整：" + string.Join("；", integrityIssues));
+        var pristineDb = Path.Combine(snapshotDirectory, "EnMicroMsg.db");
+        var info = await _dbInspector.InspectAsync(pristineDb);
+        AddLog($"DB inspect: {info.Status}; {info.Size:N0} bytes.");
+
+        SetStatus("正在打开聊天数据库…");
+        var db = await OpenSnapshotDatabaseAsync(snapshotDirectory);
+        _currentDbPath = db;
+        var options = await ResolveDatabaseOptionsAsync(
+            db, info.AppearsEncrypted, Path.Combine(snapshotDirectory, "derived"));
+        if (options is null)
+        {
+            SetStatus("这个备份里的数据库需要密钥，才能读取。");
+            AddLog("Automatic credential resolution did not open this database.");
+            MessageBox.Show(
+                "这份备份里的聊天数据库是加密的，软件自动尝试没有成功。\n\n" +
+                "你可以点【更多 → 手动输入数据库密钥】填入已知口令；密钥只留在本次运行内存里，不会写进日志或文件。",
+                "需要数据库密钥", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _currentDbOptions = options;
+        var activeDb = _currentDbPath ?? db;
+        var schema = await _dbReader.DetectSchemaAsync(activeDb, options);
+        AddLog($"Schema: message={schema.MessageTable ?? "(none)"}; conversation={schema.ConversationTable ?? "(fallback)"}; contact={schema.ContactTable ?? "(none)"}.");
+        SetStatus("正在读取联系人和聊天列表…");
+        var conversations = await _dbReader.LoadConversationsAsync(activeDb, options);
+        _currentConversations = conversations;
+        ConversationList.ItemsSource = conversations;
+        _workspace = null;
+        _currentConversation = null;
+        _currentMessages = Array.Empty<WeChatMessage>();
+        SetAddButtonsEnabled(false);
+        SetEmptyState(conversations.Count == 0);
+        AddLog($"Loaded {conversations.Count:N0} conversations from the snapshot.");
+
+        var postIssues = await _integrity.CheckAsync(snapshotDirectory);
+        AddLog(postIssues.Count == 0
+            ? "Snapshot stayed read-only: manifest, sizes and SHA-256 values still match."
+            : "WARNING: snapshot files changed during analysis: " + string.Join("; ", postIssues));
+
+        SetStatus(conversations.Count == 0
+            ? "这份备份里没有读到聊天，可以换一份备份试试。"
+            : $"读到了 {conversations.Count} 个聊天。在左边点一个，就能看内容。");
+        UpdateGuideHint(conversations.Count == 0
+            ? null
+            : "在左边点一个聊天 → 再点中间一条消息，右边就能改。");
+    }
+
+    /// <summary>One-click flow: connect the phone, snapshot it and show the chats.</summary>
+    private async void OnLoadFromPhone(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SetStatus("正在连接手机…");
+            _device = await _adb.ProbeAsync();
+            DeviceBadge.Text = $"{_device.Model} 已连接";
+            DeviceIndicator.Fill = Brushes.ForestGreen;
+            if (!_device.MatchesLockedBaseline)
+            {
+                var proceed = MessageBox.Show(
+                    $"当前手机是 {_device.Model} / Android {_device.AndroidVersion} / 微信 {_device.WeChatVersion}，\n" +
+                    "不在已验证的机型列表里，读取可能失败。要继续吗？",
+                    "机型未验证", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+                if (proceed != MessageBoxResult.OK)
+                {
+                    SetStatus("已取消。");
+                    return;
+                }
+            }
+
+            SetStatus("正在给手机上的记录做只读备份（会先暂停微信）…");
+            var snapshot = await _snapshots.CreateDatabaseSnapshotAsync(_device, AddLog);
+            _latestSnapshotDirectory = snapshot.DirectoryPath;
+            var item = await _snapshotCatalog.InspectDirectoryAsync(snapshot.DirectoryPath);
+            if (item is not null && item.IsUsable) SelectSnapshot(item);
+            AddLog($"Snapshot directory: {snapshot.DirectoryPath}");
+
+            await LoadSnapshotAsync(snapshot.DirectoryPath);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Load from phone failed: {ex.Message}");
+            SetStatus("读取失败：" + ex.Message);
+            MessageBox.Show(
+                "没能从手机读到记录。\n\n" + ex.Message +
+                "\n\n请确认：数据线已连接、手机上允许了 USB 调试、微信版本与机型符合要求。",
+                "读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -480,7 +562,8 @@ public partial class MainWindow : Window
             SetAddButtonsEnabled(true);
             ApplyMessageFilter();
             AddLog($"Workspace created for {_currentConversation.EffectiveName}: {_workspace.Messages.Count} messages.");
-            UpdateGuideHint();
+            SetStatus($"已打开可编辑副本（{_workspace.Messages.Count} 条）。可以改内容、加消息，然后写回手机。");
+            UpdateGuideHint("改内容或点【＋ 添加消息】补记录；改完再点右上角【写回手机】同步到微信。");
             return;
         }
 
@@ -762,7 +845,7 @@ public partial class MainWindow : Window
         {
             if (_workspace is null)
             {
-                MessageBox.Show("请先选择会话并点【工作副本】，再写回手机。", "写回手机",
+                MessageBox.Show("请先在左边点一个聊天，再写回手机。", "写回手机",
                     MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -826,14 +909,18 @@ public partial class MainWindow : Window
                 _manualDatabaseKeyIsRawHex ? _manualDatabaseKey : null,
                 _workspace);
 
-            WriteBackButton.IsEnabled = false;
-            UpdateGuideHint("正在写回手机：生成数据库、备份、推送、重启微信并校验，请勿断开数据线。");
+            HeaderWriteBackButton.IsEnabled = false;
+            SetStatus("正在写回手机：备份原库 → 写入 → 重启微信 → 校验，请勿断开数据线…");
+            UpdateGuideHint("正在写回手机：备份原库 → 写入 → 重启微信 → 校验，请勿断开数据线。");
             var result = await new PhoneRestoreService(_adb).RestoreAsync(request, AddLog);
             AddLog($"Write-back finished: success={result.Success}; updated={result.UpdatedRows}; " +
                    $"inserted={result.InsertedRows}; verified={result.VerifiedRows}.");
             UpdateGuideHint(result.Success
-                ? "已写回手机并回读校验通过。可在微信里打开该会话确认。"
-                : "写回未完全成功，手机侧备份与本地回滚包都在，可按提示重试或还原。");
+                ? "已经同步到手机微信了，打开这个聊天就能看到。"
+                : "写回没完全成功；手机侧备份和电脑上的回滚包都在，可以重试或还原。");
+            SetStatus(result.Success
+                ? $"写回完成：改了 {result.UpdatedRows} 条、新增 {result.InsertedRows} 条，手机回读校验 {result.VerifiedRows}/{_workspace.Messages.Count}。"
+                : "写回未完全成功，详见弹窗里的步骤说明。");
             MessageBox.Show(
                 (result.Success ? "写回完成并通过回读校验。\n\n" : "写回未完全成功。\n\n") +
                 $"更新行：{result.UpdatedRows}\n新增行：{result.InsertedRows}\n" +
@@ -851,7 +938,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            WriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
+            HeaderWriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
         }
     }
 
@@ -957,11 +1044,16 @@ public partial class MainWindow : Window
                 var options = _currentDbOptions ?? new DatabaseOpenOptions { ReadOnly = true };
                 _currentMessages = await _dbReader.LoadMessagesAsync(
                     _currentDbPath, conversation.Username, options);
-                _workspace = null;
-                SetAddButtonsEnabled(false);
+                // Editing is the point of this tool, so the editable copy is
+                // opened automatically; the user never has to manage it.
+                _workspace = _workspaceService.Create(
+                    _latestSnapshotDirectory ?? "", conversation, _currentMessages);
+                SetAddButtonsEnabled(true);
                 ApplyMessageFilter();
                 AddLog($"Loaded {_currentMessages.Count:N0} messages: {conversation.EffectiveName}");
-                UpdateGuideHint();
+                SetEmptyState(false);
+                SetStatus($"这个聊天有 {_currentMessages.Count:N0} 条记录。点中间任意一条，右边就能改；改完点【保存修改】。");
+                UpdateGuideHint("改好内容后点【保存修改】，再点右上角【写回手机】就能同步到微信。");
             }
             catch (Exception ex)
             {
@@ -1015,6 +1107,15 @@ public partial class MainWindow : Window
 
     private WorkspaceMessage? SelectedWorkspaceMessage =>
         Unwrap(MessageList.SelectedItem) as WorkspaceMessage;
+
+    /// <summary>Shows only the editor blocks that make sense for this message.</summary>
+    private void SetEditorGroup(MessageKind kind)
+    {
+        if (MediaGroup is null) return;
+        MediaGroup.Visibility = MessageKindPolicy.HasExternalMedia(kind)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
 
     private static IReadOnlyList<ChatBubble> BuildBubbles(IEnumerable<WeChatMessage> messages)
     {
@@ -1077,7 +1178,8 @@ public partial class MainWindow : Window
             case WeChatMessage message:
                 FillEditor(message);
                 SetEditorMode(false, message.IsTransaction);
-                UpdateGuideHint("原始快照只读。点【工作副本】打开可编辑副本后，就能新增或修改这个会话的消息。");
+                SetEditorGroup(message.Kind);
+                UpdateGuideHint("这是电脑上的备份，只读。点【工作副本】打开可编辑副本后就能改。");
                 if (_device is not null && message.Kind is MessageKind.Image or MessageKind.Video
                     or MessageKind.Voice or MessageKind.Emoji or MessageKind.File)
                 {
@@ -1093,13 +1195,15 @@ public partial class MainWindow : Window
             case WorkspaceMessage edited:
                 FillEditor(edited);
                 SetEditorMode(edited.CanEdit, edited.IsTransaction);
+                SetEditorGroup(edited.Kind);
                 UpdateGuideHint(edited.IsTransaction
-                    ? "这条是交易类记录，可以编辑；请只用来恢复真实数据，改完点【保存工作副本】。"
-                    : "可编辑：在右侧改内容/日期/媒体/卡片，改完点【保存工作副本】写盘。");
+                    ? "这条是交易类记录，可以改；请只填真实发生过的内容，改完点【保存修改】。"
+                    : "直接在右边改内容或附件，改完点【保存修改】。");
                 break;
             case MessagePreview preview:
                 FillEditor(preview);
                 SetEditorMode(false, preview.IsTransaction);
+                SetEditorGroup(ParseDemoKind(preview.Type));
                 UpdateGuideHint("当前显示的是内置示例数据；连接设备并解析快照后会显示真实记录。");
                 break;
         }
@@ -1145,7 +1249,8 @@ public partial class MainWindow : Window
             MessageList.SelectedItem = bubbles.FirstOrDefault(x => ReferenceEquals(x.Source, message));
         if (MessageList.SelectedItem is not null) MessageList.ScrollIntoView(MessageList.SelectedItem);
         AddLog($"Workspace message added: {kind}, id={message.LocalId}.");
-        UpdateGuideHint("已新增一条消息：在右侧“内容”页把模板文字改成你要的内容，再点【保存工作副本】。");
+        SetStatus("已添加一条记录。在右边把内容改好，再点【保存修改】。");
+        UpdateGuideHint("新记录已加好：右边改内容 → 点【保存修改】。");
     }
 
     private async void OnAddText(object sender, RoutedEventArgs e) =>
@@ -1269,7 +1374,8 @@ public partial class MainWindow : Window
             MessageList.Items.Refresh();
             FillEditor(msg);
             AddLog($"Workspace saved: {path}");
-            UpdateGuideHint("已保存到工作副本。可以继续新增或修改；点【差异】查看全部改动。");
+            SetStatus("已保存到电脑上的副本。要同步到手机微信，点右上角【写回手机】。");
+            UpdateGuideHint("改好了。点右上角【写回手机】，确认后就会同步回微信。");
         }
         catch (Exception ex)
         {
@@ -1294,6 +1400,7 @@ public partial class MainWindow : Window
             FillEditor(msg);
         }
         AddLog($"Workspace message reverted: {msg.LocalId}");
+        SetStatus("已把这条恢复成原来的样子。");
         UpdateGuideHint();
     }
 
@@ -1419,7 +1526,7 @@ public partial class MainWindow : Window
         PropertyAttachment.IsReadOnly = !allow;
         EditButton.IsEnabled = allow;
         UndoButton.IsEnabled = allow;
-        WriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
+        HeaderWriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
         ReplaceMediaButton.IsEnabled = allow &&
             SelectedWorkspaceMessage is { } workspaceMessage &&
             MessageKindPolicy.HasExternalMedia(workspaceMessage.Kind);
