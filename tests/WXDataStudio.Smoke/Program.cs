@@ -389,6 +389,38 @@ var diffService = new WorkspaceDiffService();
 var diffs = diffService.GetDiffs(workspace);
 Assert(diffs.Count >= 2, "workspace diff mismatch");
 
+// Batch timeline shift used by the editor's "shift 60s" action: the anchor and
+// later messages move, earlier messages stay, read-only records are skipped.
+var shiftWorkspace = workspaceService.Create(root, conversations[0], new[]
+{
+    new WeChatMessage { LocalId = 11, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_000 },
+    new WeChatMessage { LocalId = 12, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_100 },
+    new WeChatMessage { LocalId = 13, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_200 }
+});
+var packet = WorkspaceMessage.From(new WeChatMessage
+{
+    LocalId = 90,
+    ConversationId = "alice",
+    Kind = MessageKind.RedPacket,
+    CreateTime = 1_726_600_150,
+    Content = "<msg><appmsg><type>2001</type></appmsg></msg>"
+});
+Assert(packet.Sensitive && !packet.CanEdit, "red packet workspace message must stay read-only");
+shiftWorkspace.Messages.Add(packet);
+shiftWorkspace.Messages.Sort((a, b) => a.CreateTime.CompareTo(b.CreateTime));
+
+var beforeShift = shiftWorkspace.Messages.ToDictionary(x => x.LocalId, x => x.CreateTime);
+var (shifted, skipped) = workspaceService.ShiftTimeline(shiftWorkspace, 12, 60);
+Assert(shifted == 2 && skipped == 1, "batch shift must move the tail and skip read-only records");
+Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 11).CreateTime == beforeShift[11],
+    "batch shift must not touch messages before the anchor");
+Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 12).CreateTime == beforeShift[12] + 60,
+    "batch shift must move the anchor message");
+Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 13).CreateTime == beforeShift[13] + 60,
+    "batch shift must move later messages");
+Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 90).CreateTime == beforeShift[90],
+    "batch shift must not touch read-only records");
+
 var catalogRoot = Path.Combine(root, "snapshots");
 var incompleteDir = Path.Combine(catalogRoot, "20260101-000000");
 var usableDir = Path.Combine(catalogRoot, "20260102-000000");

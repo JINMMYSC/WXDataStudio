@@ -106,6 +106,39 @@ public sealed class WorkspaceService
         msg.Attachment = msg.OriginalAttachment;
     }
 
+    /// <summary>
+    /// Shifts the anchor message and every later message by the same offset so a
+    /// new record can be inserted without disturbing the earlier timeline.
+    /// Read-only transaction records are counted and skipped.
+    /// </summary>
+    public (int Shifted, int Skipped) ShiftTimeline(
+        WorkspaceDocument workspace, long anchorMessageId, int offsetSeconds)
+    {
+        var ordered = workspace.Messages
+            .OrderBy(x => x.CreateTime)
+            .ThenBy(x => x.LocalId)
+            .ToArray();
+        var index = Array.FindIndex(ordered, x => x.LocalId == anchorMessageId);
+        if (index < 0)
+            throw new KeyNotFoundException($"Message {anchorMessageId} was not found.");
+
+        var shifted = 0;
+        var skipped = 0;
+        foreach (var message in ordered.Skip(index))
+        {
+            if (!message.CanEdit)
+            {
+                skipped++;
+                continue;
+            }
+
+            EditTime(workspace, message.LocalId, message.CreateTime + offsetSeconds);
+            shifted++;
+        }
+
+        return (shifted, skipped);
+    }
+
     public async Task<string> SaveAsync(WorkspaceDocument workspace, string root)
     {
         Directory.CreateDirectory(root);

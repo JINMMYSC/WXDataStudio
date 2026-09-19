@@ -11,19 +11,19 @@
                 </Grid.ColumnDefinitions>
                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="WXDataStudio" FontSize="22" FontWeight="SemiBold" Margin="0,0,22,0"/>
-                    <Button Content="设备" Padding="14,7" Margin="0,0,8,0" Click="OnRefreshDevice"/>
-                    <Button Content="快照" Padding="14,7" Margin="0,0,8,0" Click="OnCreateSnapshot"/>
-                    <Button Content="解析快照" Padding="14,7" Margin="0,0,8,0" Click="OnAnalyzeSnapshot"/>
-                    <Button Content="选择快照" Padding="14,7" Margin="0,0,8,0" Click="OnSelectSnapshot"/>
-                    <Button Content="数据库诊断" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseDiagnostics"/>
-                    <Button Content="数据库密钥" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseKey"/>
-                    <Button Content="密钥诊断" Padding="14,7" Margin="0,0,8,0" Click="OnKeyDiagnostics"/>
-                    <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace"/>
-                    <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff"/>
-                    <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck"/>
-                    <Button Content="回滚包" Padding="14,7" Margin="0,0,8,0" Click="OnCreateRollbackPackage"/>
-                    <Button Content="迁移检查" Padding="14,7" Margin="0,0,8,0" Click="OnMigrationCheck"/>
-                    <Button Content="阶段三验收" Padding="14,7" Click="OnStage3Acceptance"/>
+                    <Button Content="设备" Padding="14,7" Margin="0,0,8,0" Click="OnRefreshDevice" ToolTip="第 1 步：通过 ADB 检测手机、Root 与微信版本"/>
+                    <Button Content="快照" Padding="14,7" Margin="0,0,8,0" Click="OnCreateSnapshot" ToolTip="第 2 步：暂停微信并创建只读本地快照（含大小与 SHA-256 清单）"/>
+                    <Button Content="解析快照" Padding="14,7" Margin="0,0,8,0" Click="OnAnalyzeSnapshot" ToolTip="第 3 步：只读打开快照数据库并读取会话列表"/>
+                    <Button Content="选择快照" Padding="14,7" Margin="0,0,8,0" Click="OnSelectSnapshot" ToolTip="切换到其它目录中已有的快照"/>
+                    <Button Content="数据库诊断" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseDiagnostics" ToolTip="查看主库大小、WAL/SHM 与完整性检查结果"/>
+                    <Button Content="数据库密钥" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseKey" ToolTip="手工输入文本口令或 Raw Hex；只在本次进程内存中保存"/>
+                    <Button Content="密钥诊断" Padding="14,7" Margin="0,0,8,0" Click="OnKeyDiagnostics" ToolTip="查看可用候选来源数量，不显示密钥、UIN 或设备标识的值"/>
+                    <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace" ToolTip="第 5 步：打开可编辑副本；不打开就无法新增或修改聊天记录"/>
+                    <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff" ToolTip="查看当前工作副本的全部改动"/>
+                    <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck" ToolTip="核对快照文件的大小与 SHA-256"/>
+                    <Button Content="回滚包" Padding="14,7" Margin="0,0,8,0" Click="OnCreateRollbackPackage" ToolTip="把快照打包成 ZIP 回滚备份"/>
+                    <Button Content="迁移检查" Padding="14,7" Margin="0,0,8,0" Click="OnMigrationCheck" ToolTip="生成迁移准备报告（JSON + 文本）"/>
+                    <Button Content="阶段三验收" Padding="14,7" Click="OnStage3Acceptance" ToolTip="执行一次只读真机自检并写出验收报告"/>
                 </WrapPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse x:Name="DeviceIndicator" Width="9" Height="9" Fill="#8C959F" Margin="0,0,7,0"/>
@@ -33,7 +33,20 @@
                     </StackPanel>
                 </StackPanel>
             </Grid>
-        </Border>        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#DADDE2" BorderThickness="0,1,0,0" Height="145" Padding="12">
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="#EEF4FF" BorderBrush="#C9DCFF" BorderThickness="0,0,0,1" Padding="14,7">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="GuideHint" VerticalAlignment="Center" Foreground="#123C8C"
+                           TextTrimming="CharacterEllipsis"
+                           Text="第 1 步：点【设备】检查手机连接，再点【快照】建立本地只读快照。"/>
+                <Button Grid.Column="1" Content="使用教程" Padding="12,5" Margin="12,0,0,0" Click="OnShowGuide"
+                        ToolTip="打开分步教程：如何新增、修改、撤销聊天记录并导出报告"/>
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#DADDE2" BorderThickness="0,1,0,0" Height="145" Padding="12">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <TextBlock Text="日志 / 完整性检查" FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -70,16 +83,16 @@
                             <ComboBoxItem Content="系统消息"/><ComboBoxItem Content="交易类（只读）"/>
                         </ComboBox>
                         <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,10,0,0">
-                            <Button Content="+ 文字" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddTextButton" Click="OnAddText"/>
-                            <Button Content="+ 图片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddImageButton" Click="OnAddImage"/>
-                            <Button Content="+ 视频" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVideoButton" Click="OnAddVideo"/>
-                            <Button Content="+ 语音" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVoiceButton" Click="OnAddVoice"/>
-                            <Button Content="+ 文件" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddFileButton" Click="OnAddFile"/>
-                            <Button Content="+ 位置/卡片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddCardButton" Click="OnAddCard"/>
-                            <Button Content="+ 表情" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddEmojiButton" Click="OnAddEmoji"/>
-                            <Button Content="+ 名片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddContactButton" Click="OnAddContact"/>
-                            <Button Content="+ 链接/小程序" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddLinkButton" Click="OnAddLink"/>
-                            <Button Content="+ 引用" Padding="10,5" IsEnabled="False" x:Name="AddQuoteButton" Click="OnAddQuote"/>
+                            <Button Content="+ 文字" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddTextButton" Click="OnAddText" ToolTip="在工作副本中新增一条文字消息（需先打开工作副本）"/>
+                            <Button Content="+ 图片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddImageButton" Click="OnAddImage" ToolTip="选择本地图片并新增一条图片消息，文件会复制进工作副本"/>
+                            <Button Content="+ 视频" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVideoButton" Click="OnAddVideo" ToolTip="选择本地视频并新增一条视频消息"/>
+                            <Button Content="+ 语音" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddVoiceButton" Click="OnAddVoice" ToolTip="选择本地音频并新增一条语音消息"/>
+                            <Button Content="+ 文件" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddFileButton" Click="OnAddFile" ToolTip="选择任意本地文件并新增一条文件消息"/>
+                            <Button Content="+ 位置/卡片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddCardButton" Click="OnAddCard" ToolTip="新增位置/卡片消息草稿，随后在右侧编辑字段"/>
+                            <Button Content="+ 表情" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddEmojiButton" Click="OnAddEmoji" ToolTip="选择表情图片并新增一条表情消息"/>
+                            <Button Content="+ 名片" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddContactButton" Click="OnAddContact" ToolTip="新增名片消息草稿，随后填写用户名与昵称"/>
+                            <Button Content="+ 链接/小程序" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddLinkButton" Click="OnAddLink" ToolTip="新增链接/小程序消息草稿，随后填写标题与 URL"/>
+                            <Button Content="+ 引用" Padding="10,5" IsEnabled="False" x:Name="AddQuoteButton" Click="OnAddQuote" ToolTip="新增引用消息草稿，随后填写引用发送者与引用内容"/>
                         </WrapPanel>
                     </Grid>
                     <TextBox DockPanel.Dock="Top" x:Name="MessageSearchBox" Height="30" Margin="0,0,0,8"
@@ -97,8 +110,10 @@
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
                         <CheckBox x:Name="ReadOnlyFlag" Content="敏感/交易凭证类：强制只读" IsChecked="True" IsEnabled="False" Visibility="Collapsed" Margin="0,0,0,8"/>
                         <WrapPanel>
-                            <Button Content="保存工作副本" Padding="12,7" Margin="0,0,8,0" IsEnabled="False" x:Name="EditButton" Click="OnSaveWorkspaceMessage"/>
-                            <Button Content="撤销" Padding="12,7" IsEnabled="False" x:Name="UndoButton" Click="OnUndoWorkspaceMessage"/>
+                            <Button Content="保存工作副本" Padding="12,7" Margin="0,0,8,0" IsEnabled="False" x:Name="EditButton" Click="OnSaveWorkspaceMessage"
+                                    ToolTip="把右侧的正文、附件和时间改动写入工作副本 JSON（不保存就不会保留）"/>
+                            <Button Content="撤销" Padding="12,7" IsEnabled="False" x:Name="UndoButton" Click="OnUndoWorkspaceMessage"
+                                    ToolTip="把选中消息恢复为原始内容；新增的消息会被删除"/>
                         </WrapPanel>
                         <TextBlock Text="当前适配器：wechat-android-8.0.76-3141" Margin="0,9,0,0" FontSize="11" Foreground="#6A737D"/>
                         <TextBlock Text="真实写回尚未开启；先完成解析、快照、回滚和一致性验证。" Foreground="#9A6700" FontSize="11" TextWrapping="Wrap"/>
@@ -131,7 +146,8 @@
                             <TextBlock Text="显示时间"/><TextBox x:Name="DateDisplay" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="排序时间 / sequence"/><TextBox x:Name="DateSort" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="时区"/><TextBox x:Name="DateTimezone" IsReadOnly="True" Margin="0,2,0,8"/>
-                            <WrapPanel><Button Content="批量顺延" Padding="10,5" IsEnabled="False"/><Button x:Name="ValidateTimelineButton" Content="校验时间线" Padding="10,5" Margin="6,0,0,0" IsEnabled="False" Click="OnValidateTimeline"/></WrapPanel>
+                            <WrapPanel><Button x:Name="ShiftTimelineButton" Content="批量顺延 60 秒" Padding="10,5" IsEnabled="False" Click="OnShiftTimeline"
+                                               ToolTip="把选中消息及其之后的所有消息整体推后 60 秒，用于腾出插入空间；只读交易类会被跳过"/><Button x:Name="ValidateTimelineButton" Content="校验时间线" Padding="10,5" Margin="6,0,0,0" IsEnabled="False" Click="OnValidateTimeline"/></WrapPanel>
                         </StackPanel></ScrollViewer></TabItem>
 
                         <TabItem Header="位置/卡片"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">

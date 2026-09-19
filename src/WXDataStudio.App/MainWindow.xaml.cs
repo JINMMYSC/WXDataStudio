@@ -73,6 +73,7 @@ public partial class MainWindow : Window
                 SnapshotBadge.Text = "暂无可用本地快照";
                 DeviceIndicator.Fill = Brushes.Gray;
                 AddLog("Offline mode ready. No usable local snapshot was found.");
+                if (!HasSeenGuide()) _ = Dispatcher.BeginInvoke(new Action(ShowGuide));
                 return;
             }
 
@@ -102,6 +103,61 @@ public partial class MainWindow : Window
         _currentMessages = Array.Empty<WeChatMessage>();
         SetAddButtonsEnabled(false);
         SnapshotBadge.Text = $"快照：{item.DisplayName}";
+        UpdateGuideHint();
+    }
+
+    private void OnShowGuide(object sender, RoutedEventArgs e) => ShowGuide();
+
+    private void ShowGuide()
+    {
+        new HelpWindow { Owner = this }.ShowDialog();
+        MarkGuideSeen();
+    }
+
+    private static string GuideMarkerPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "WXDataStudio", "guide-seen.flag");
+
+    private static bool HasSeenGuide() => File.Exists(GuideMarkerPath);
+
+    private static void MarkGuideSeen()
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(GuideMarkerPath);
+            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllText(GuideMarkerPath, DateTimeOffset.Now.ToString("O"));
+        }
+        catch
+        {
+            // A marker that cannot be written only means the guide may open again.
+        }
+    }
+
+    /// <summary>
+    /// Keeps the hint strip pointing at the next actionable step instead of
+    /// leaving the user to guess which button is enabled in the current state.
+    /// </summary>
+    private void UpdateGuideHint(string? overrideHint = null)
+    {
+        if (GuideHint is null) return;
+        if (!string.IsNullOrWhiteSpace(overrideHint))
+        {
+            GuideHint.Text = overrideHint;
+            return;
+        }
+
+        GuideHint.Text = _workspace is not null
+            ? "第 6-7 步：用 + 按钮新增消息；在列表里选中一条后在右侧修改，再点【保存工作副本】。"
+            : _currentConversation is not null
+                ? "第 5 步：点【工作副本】打开可编辑副本，之后即可新增或修改这个会话的聊天记录。"
+                : !string.IsNullOrWhiteSpace(_currentDbPath)
+                    ? "第 4 步：在左侧【会话】列表点一个联系人或群。"
+                    : !string.IsNullOrWhiteSpace(_latestSnapshotDirectory)
+                        ? "第 3 步：点【解析快照】打开数据库并读取会话。"
+                        : _device is not null
+                            ? "第 2 步：点【快照】建立本地只读快照。"
+                            : "第 1 步：点【设备】检查手机连接，再点【快照】建立本地只读快照。";
     }
 
     private async void OnSelectSnapshot(object sender, RoutedEventArgs e)
@@ -171,6 +227,7 @@ public partial class MainWindow : Window
             AddLog(_device.MatchesLockedBaseline
                 ? "Device matches the locked baseline."
                 : "WARNING: device does not fully match the locked baseline.");
+            UpdateGuideHint();
         }
         catch (Exception ex)
         {
@@ -195,6 +252,7 @@ public partial class MainWindow : Window
             AddLog($"Snapshot directory: {result.DirectoryPath}");
             MessageBox.Show("只读数据库快照完成。\n\n" + result.DirectoryPath,
                 "快照完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            UpdateGuideHint();
         }
         catch (Exception ex)
         {
@@ -401,6 +459,7 @@ public partial class MainWindow : Window
             AddLog(postIssues.Count == 0
                 ? "Snapshot stayed read-only: manifest, sizes and SHA-256 values still match."
                 : "WARNING: snapshot files changed during analysis: " + string.Join("; ", postIssues));
+            UpdateGuideHint();
         }
         catch (Exception ex)
         {
@@ -419,6 +478,7 @@ public partial class MainWindow : Window
             SetAddButtonsEnabled(true);
             ApplyMessageFilter();
             AddLog($"Workspace created for {_currentConversation.EffectiveName}: {_workspace.Messages.Count} messages.");
+            UpdateGuideHint();
             return;
         }
 
@@ -724,6 +784,7 @@ public partial class MainWindow : Window
                 SetAddButtonsEnabled(false);
                 ApplyMessageFilter();
                 AddLog($"Loaded {_currentMessages.Count:N0} messages: {conversation.EffectiveName}");
+                UpdateGuideHint();
             }
             catch (Exception ex)
             {
@@ -792,6 +853,9 @@ public partial class MainWindow : Window
             case WeChatMessage message:
                 FillEditor(message);
                 SetEditorMode(false, message.Sensitive);
+                UpdateGuideHint(message.Sensitive
+                    ? "这条记录属于交易/红包/收付款类，保持只读。"
+                    : "原始快照只读。点【工作副本】打开可编辑副本后，才能新增或修改这个会话的消息。");
                 if (_device is not null && message.Kind is MessageKind.Image or MessageKind.Video
                     or MessageKind.Voice or MessageKind.Emoji or MessageKind.File)
                 {
@@ -807,10 +871,14 @@ public partial class MainWindow : Window
             case WorkspaceMessage edited:
                 FillEditor(edited);
                 SetEditorMode(edited.CanEdit, edited.Sensitive);
+                UpdateGuideHint(edited.Sensitive
+                    ? "这条记录属于交易/红包/收付款类，保持只读。"
+                    : "可编辑：在右侧改内容/日期/媒体/卡片，改完点【保存工作副本】写盘。");
                 break;
             case MessagePreview preview:
                 FillEditor(preview);
                 SetEditorMode(false, preview.Sensitive);
+                UpdateGuideHint("当前显示的是内置示例数据；连接设备并解析快照后会显示真实记录。");
                 break;
         }
     }
@@ -854,6 +922,7 @@ public partial class MainWindow : Window
         MessageList.SelectedItem = message;
         MessageList.ScrollIntoView(message);
         AddLog($"Workspace message added: {kind}, id={message.LocalId}.");
+        UpdateGuideHint("已新增一条消息：在右侧“内容”页把模板文字改成你要的内容，再点【保存工作副本】。");
     }
 
     private async void OnAddText(object sender, RoutedEventArgs e) =>
@@ -977,6 +1046,7 @@ public partial class MainWindow : Window
             MessageList.Items.Refresh();
             FillEditor(msg);
             AddLog($"Workspace saved: {path}");
+            UpdateGuideHint("已保存到工作副本。可以继续新增或修改；点【差异】查看全部改动。");
         }
         catch (Exception ex)
         {
@@ -1001,6 +1071,31 @@ public partial class MainWindow : Window
             FillEditor(msg);
         }
         AddLog($"Workspace message reverted: {msg.LocalId}");
+        UpdateGuideHint();
+    }
+
+    private void OnShiftTimeline(object sender, RoutedEventArgs e)
+    {
+        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage anchor)
+        {
+            MessageBox.Show(
+                "请先在列表中选中一条消息。批量顺延会作用于这条消息以及它之后的所有消息。",
+                "批量顺延", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        const int stepSeconds = 60;
+        var (shifted, skipped) = _workspaceService.ShiftTimeline(
+            _workspace, anchor.LocalId, stepSeconds);
+
+        MessageList.Items.Refresh();
+        FillEditor(anchor);
+        AddLog($"Workspace timeline shifted +{stepSeconds}s on {shifted} message(s); read-only skipped={skipped}.");
+        MessageBox.Show(
+            $"已把选中消息及其之后的 {shifted} 条消息整体推后 {stepSeconds} 秒。" +
+            (skipped > 0 ? $"\n跳过了 {skipped} 条只读交易类记录。" : "") +
+            "\n\n记得点【保存工作副本】写入磁盘。",
+            "批量顺延", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void FillEditor(WeChatMessage m)
@@ -1106,6 +1201,7 @@ public partial class MainWindow : Window
             MessageKindPolicy.HasExternalMedia(workspaceMessage.Kind);
         PreviewMediaButton.IsEnabled = File.Exists(MediaOriginalPath.Text);
         ValidateTimelineButton.IsEnabled = _workspace is not null || _currentMessages.Count > 0;
+        ShiftTimelineButton.IsEnabled = allow && MessageList.SelectedItem is WorkspaceMessage;
     }
 
     private void AddLog(string text)
