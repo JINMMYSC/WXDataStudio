@@ -114,6 +114,8 @@ public sealed class MediaLocatorService
             locations.Add(new MediaSearchLocation(
                 "/sdcard/Android/data/com.tencent.mm/MicroMsg/Download", "Download", false));
             locations.Add(new MediaSearchLocation(
+                "/sdcard/tencent/MicroMsg/Download", "Download", false));
+            locations.Add(new MediaSearchLocation(
                 "/sdcard/Download/WeiXin", "Download", false));
         }
         return locations.DistinctBy(x => x.Directory, StringComparer.OrdinalIgnoreCase).ToArray();

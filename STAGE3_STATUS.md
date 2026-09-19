@@ -27,13 +27,16 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Workspace edit/revert/audit/diff support, including newly created local messages.
 - Timeline validation.
 - Migration-readiness checks with JSON and text report export.
-- A one-click Stage 3 read-only acceptance action creates a fresh resolver-enabled snapshot, verifies integrity/database opening/schema mapping, requires real conversations plus sample text messages, and writes a privacy-safe acceptance report.
+- Privacy-safe message census (`MessageCensusService`): per-class counts with direction split, group-sender resolution, sensitive-class counts, unclassified raw types, and an appmsg sub-type histogram. It records counts and numeric type values only, never content, chat names or device identifiers.
+- A one-click Stage 3 read-only acceptance action creates a fresh resolver-enabled snapshot, verifies integrity/database opening/schema mapping, requires real conversations plus sample text messages, censuses every conversation, and writes a privacy-safe acceptance report plus `.census.json`.
+- Snapshot read session: every SQLite/SQLCipher read runs against a verified working copy under `<snapshot>/derived/read-session`, and the acceptance flow re-checks the manifest after parsing.
 - Verified rollback ZIP generation from an intact snapshot.
 - CI smoke coverage for parsers, SQLCipher profiles, SC1 passphrase/raw-key page decryption, workspace editing/media, snapshot catalog, timeline/readiness, rollback packaging, and report export.
 
 ## Safety / stability gates
 
 - Original snapshots stay read-only.
+- SQLite rewrites `-shm` bookkeeping even for read-only WAL opens, so the pristine snapshot database set is never opened directly; reads use a copy whose SHA-256 is verified against the source first.
 - Derived plaintext databases are written under the snapshot's `derived` area; the original encrypted database is never overwritten.
 - Phone write-back is not enabled.
 - Transaction-class records cannot be created or edited in a workspace.
@@ -41,15 +44,30 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Resolver support stays inside the local snapshot and is excluded from rollback ZIP packages.
 - SQLite connection pooling is disabled for immutable snapshot reads to avoid stale handles and file-lock surprises.
 
-## Device-dependent acceptance still required
+## Real-device verification (MIX 2S, 2026-09-20, read-only)
 
-These cannot be truthfully marked complete until the locked MIX 2S / WeChat 8.0.76 test phone is connected again:
+Performed on the locked MIX 2S / Android 9 / WeChat 8.0.76 (3141) against snapshot `20260920-011627`.
 
-1. Create one fresh resolver-enabled snapshot on the locked MIX 2S, then run the bounded UIN + device-token + SC1 resolver against the real 8.0.76 `EnMicroMsg.db`.
-2. If no bounded passphrase matches, obtain a raw key through a controlled user-owned-device diagnostic path and validate it without altering the source snapshot.
-3. Load real conversations and message rows from the captured snapshot.
-4. Verify real image/video/voice/file path mapping.
-5. Validate representative group, quote, mini-program, system, transfer, red-packet, and payment records against the real database.
-6. Validate rollback before enabling any phone write-back.
-7. Validate Android WeChat launch/readback after a controlled non-sensitive test edit.
-8. Run WeChat's supported Android-to-iPhone migration and produce the final migration report.
+Verified:
+
+1. Bounded UIN + device-token + SC1 resolver opened the real 8.0.76 `EnMicroMsg.db` read-only through a derived plaintext copy. Credential source: snapshot-derived device token + UIN with SC1 page fallback. No credential values were printed or written outside the local snapshot area.
+2. Snapshot capture: main DB 8,198,144 bytes, WAL 401,416 bytes, SHM 32,768 bytes, each compared as source → phone staging copy → local copy with matching size and SHA-256. Manifest integrity reported 0 errors both before and after parsing.
+3. Schema: message, conversation and contact tables all detected.
+4. Real data: 37 conversations (5 groups), 558 messages read across every conversation with 0 conversation read failures.
+5. Message-class census: link 242 (appmsg 5 ×229, appmsg 51 ×12, appmsg 62 ×1), image 136, text 111, voice 22, file 17 (appmsg 6), video 15, unknown 4, quote 4 (appmsg 57), emoji 2, system 2, location 1, contact card 1, red packet 1. Group-sender resolution: 158 of 198 incoming group messages.
+6. Read-only enforcement: the red-packet record is classified sensitive and cannot be edited or created in a workspace. No transfer or payment rows exist in this snapshot.
+7. Media mapping sample: image 12/12, voice 12/12, video 10/10 resolved to real files.
+8. Rollback: a rollback package was generated from the snapshot and its 4 entries matched the snapshot files by length and SHA-256.
+9. Immutability: manifest, sizes and SHA-256 values were unchanged after the full parse.
+
+Not verified:
+
+1. File and emoji payloads are absent from this phone: emoji 0/2 and file 0/8 in the resolver, and a bounded device-wide search (`/data/data/com.tencent.mm`, `/sdcard` depth 6, 25 s timeout per sample) found 0/3 file and 0/2 emoji copies. Identifiers are extracted and searchable; the cached payloads simply do not exist on the device.
+2. Mini program, transfer, payment and call classes do not occur in this snapshot, so only synthetic coverage exists for them.
+3. Two appmsg sub-type 1 messages and two messages without an appmsg sub-type remain `Unknown`.
+4. No Android write-back, and no Android-to-iPhone migration run.
+
+Still required before any write-back or migration claim:
+
+1. Validate Android WeChat launch/readback after a controlled non-sensitive test edit.
+2. Run WeChat's supported Android-to-iPhone migration and produce the final migration report.

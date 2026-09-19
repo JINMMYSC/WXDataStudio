@@ -433,6 +433,112 @@ using (var archive = System.IO.Compression.ZipFile.OpenRead(rollback.PackagePath
     Assert(archive.GetEntry("EnMicroMsg.db") is not null, "rollback package database missing");
 }
 
+var censusConversations = new[]
+{
+    new ConversationItem { Username = "alice", Remark = "Alice" },
+    new ConversationItem { Username = "team@chatroom", Remark = "Team" }
+};
+var censusMessages = new[]
+{
+    new WeChatMessage { LocalId = 1, ConversationId = "alice", Kind = MessageKind.Text, Content = "census-secret-text" },
+    new WeChatMessage { LocalId = 2, ConversationId = "alice", Kind = MessageKind.Image, ImgPath = "census-secret-image" },
+    new WeChatMessage { LocalId = 3, ConversationId = "team@chatroom", Kind = MessageKind.Text, Sender = "wxid_sender", Content = "census-secret-group" },
+    new WeChatMessage { LocalId = 4, ConversationId = "team@chatroom", IsOutgoing = true, Kind = MessageKind.RedPacket, Content = "census-secret-packet" },
+    new WeChatMessage { LocalId = 5, ConversationId = "alice", RawType = 318767153, Kind = MessageKind.Unknown, Content = "census-secret-unknown" }
+};
+var census = new MessageCensusService().Build(censusConversations, censusMessages);
+Assert(census.ConversationCount == 2, "census conversation count mismatch");
+Assert(census.GroupConversationCount == 1, "census group conversation count mismatch");
+Assert(census.MessageCount == 5, "census message count mismatch");
+Assert(census.IncomingCount == 4 && census.OutgoingCount == 1, "census direction count mismatch");
+Assert(census.GroupMessageCount == 2, "census group message count mismatch");
+Assert(census.GroupSenderResolvedCount == 1, "census group sender resolution mismatch");
+Assert(census.SensitiveCount == 1, "census sensitive count mismatch");
+Assert(census.CountOf(MessageKind.Text) == 2, "census text count mismatch");
+Assert(census.UnknownMessageCount == 1, "census unknown count mismatch");
+Assert(census.UnknownRawTypes.Single().RawType == 318767153, "census unknown raw type mismatch");
+Assert(census.MissingKinds.Contains(MessageKind.Voice), "census missing kind detection mismatch");
+Assert(!census.MissingKinds.Contains(MessageKind.Text), "census flagged a present kind as missing");
+var censusText = census.ToText();
+var censusJson = census.ToJson();
+Assert(censusText.Contains("kind-text=2"), "census text report mismatch");
+Assert(censusJson.Contains("\"rawType\": 318767153"), "census json raw type mismatch");
+Assert(!censusText.Contains("census-secret", StringComparison.Ordinal), "census text leaked message content");
+Assert(!censusJson.Contains("census-secret", StringComparison.Ordinal), "census json leaked message content");
+Assert(!censusJson.Contains("alice", StringComparison.OrdinalIgnoreCase), "census json leaked conversation ids");
+
+// Regression: SQLite rewrites -shm bookkeeping even for read-only WAL opens, so
+// snapshot reads must happen on a verified working copy.
+var liveRoot = Path.Combine(root, "live-wal");
+Directory.CreateDirectory(liveRoot);
+var walSnapshotDir = Path.Combine(root, "wal-snapshot");
+Directory.CreateDirectory(walSnapshotDir);
+var liveDbPath = Path.Combine(liveRoot, "EnMicroMsg.db");
+await using (var live = new SqliteConnection($"Data Source={liveDbPath}"))
+{
+    await live.OpenAsync();
+    await using (var pragma = live.CreateCommand())
+    {
+        pragma.CommandText = "PRAGMA journal_mode=WAL;";
+        Assert(Convert.ToString(await pragma.ExecuteScalarAsync()) == "wal",
+            "wal mode was not enabled for the regression fixture");
+    }
+    await using (var seed = live.CreateCommand())
+    {
+        seed.CommandText = "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT);" +
+                           "INSERT INTO t VALUES (1,'wal-row');";
+        await seed.ExecuteNonQueryAsync();
+    }
+
+    // Copy the live file set while the connection is open so the snapshot holds
+    // a real -wal/-shm pair, mirroring a captured phone snapshot.
+    foreach (var name in new[] { "EnMicroMsg.db", "EnMicroMsg.db-wal", "EnMicroMsg.db-shm" })
+    {
+        var source = Path.Combine(liveRoot, name);
+        if (File.Exists(source)) File.Copy(source, Path.Combine(walSnapshotDir, name), true);
+    }
+}
+var walManifestFiles = new List<SnapshotFile>();
+foreach (var name in new[] { "EnMicroMsg.db", "EnMicroMsg.db-wal", "EnMicroMsg.db-shm" })
+{
+    var path = Path.Combine(walSnapshotDir, name);
+    if (!File.Exists(path)) continue;
+    var bytes = await File.ReadAllBytesAsync(path);
+    walManifestFiles.Add(new SnapshotFile(name, bytes.LongLength,
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant()));
+}
+await File.WriteAllTextAsync(Path.Combine(walSnapshotDir, "manifest.json"),
+    System.Text.Json.JsonSerializer.Serialize(new SnapshotManifest
+    {
+        CreatedAt = DateTimeOffset.Now,
+        Device = new DeviceInfo(),
+        Files = walManifestFiles
+    }));
+Assert((await new SnapshotIntegrityService().CheckAsync(walSnapshotDir)).Count == 0,
+    "wal snapshot fixture failed its own integrity check");
+
+var readSession = await SnapshotReadSession.OpenAsync(walSnapshotDir);
+Assert(File.Exists(readSession.DatabasePath), "read session database copy missing");
+Assert(readSession.CopiedFiles.Contains("EnMicroMsg.db"), "read session did not copy the main database");
+Assert(readSession.DatabasePath != Path.Combine(walSnapshotDir, "EnMicroMsg.db"),
+    "read session must not expose the pristine snapshot database");
+await using (var readOnly = new SqliteConnection(
+    $"Data Source={readSession.DatabasePath};Mode=ReadOnly;Pooling=False"))
+{
+    await readOnly.OpenAsync();
+    await using var count = readOnly.CreateCommand();
+    count.CommandText = "SELECT COUNT(*) FROM t;";
+    Assert(Convert.ToInt32(await count.ExecuteScalarAsync()) == 1,
+        "read session did not expose committed WAL contents");
+}
+Assert((await new SnapshotIntegrityService().CheckAsync(walSnapshotDir)).Count == 0,
+    "snapshot files changed while the database was read");
+await readSession.DisposeAsync();
+Assert(!Directory.Exists(SnapshotReadSession.WorkingDirectoryFor(walSnapshotDir)),
+    "read session working copy was not cleaned up");
+Assert((await new SnapshotIntegrityService().CheckAsync(walSnapshotDir)).Count == 0,
+    "snapshot integrity failed after read session disposal");
+
 var workspacePath = await workspaceService.SaveAsync(workspace, root);
 var loaded = await workspaceService.LoadAsync(workspacePath);
 Assert(loaded.Messages.Single(x => x.LocalId == 1).Content == "edited hello", "workspace persistence mismatch");

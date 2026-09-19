@@ -69,4 +69,10 @@ public static class MessageTypeClassifier
         if (end <= start) return 0;
         return int.TryParse(xml[start..end].Trim(), out var value) ? value : 0;
     }
+
+    /// <summary>
+    /// Returns the numeric appmsg sub-type for a type-49 message, or 0 when the
+    /// payload carries no explicit sub-type.
+    /// </summary>
+    public static int ReadAppMessageSubtype(string? content) => ReadIntTag(content ?? "", "type");
 }

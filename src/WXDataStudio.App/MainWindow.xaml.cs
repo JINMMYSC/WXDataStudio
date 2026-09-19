@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly SnapshotCatalogService _snapshotCatalog = new();
     private readonly RollbackPackageService _rollbackPackages = new();
     private readonly LegacySc1PageDecryptService _sc1Decrypt = new();
+    private readonly MessageCensusService _messageCensus = new();
     private readonly MediaLocatorService _mediaLocator;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
@@ -42,6 +43,7 @@ public partial class MainWindow : Window
     private DatabaseOpenOptions? _currentDbOptions;
     private string? _manualDatabaseKey;
     private bool _manualDatabaseKeyIsRawHex;
+    private SnapshotReadSession? _readSession;
 
     public MainWindow()
     {
@@ -239,7 +241,27 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task<DatabaseOpenOptions?> ResolveDatabaseOptionsAsync(string db, bool encrypted)
+    /// <summary>
+    /// Returns the database path that all reads must use. Reading a pristine
+    /// snapshot would let SQLite rewrite the -shm bookkeeping file, so reads go
+    /// through a verified working copy instead.
+    /// </summary>
+    private async Task<string> OpenSnapshotDatabaseAsync(string snapshotDirectory)
+    {
+        if (_readSession is null ||
+            !string.Equals(_readSession.SnapshotDirectory, snapshotDirectory,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            if (_readSession is not null) await _readSession.DisposeAsync();
+            _readSession = await SnapshotReadSession.OpenAsync(snapshotDirectory);
+            AddLog("Snapshot read session prepared; database reads use a verified working copy.");
+        }
+
+        return _readSession.DatabasePath;
+    }
+
+    private async Task<DatabaseOpenOptions?> ResolveDatabaseOptionsAsync(
+        string db, bool encrypted, string derivedDirectory)
     {
         if (!encrypted)
         {
@@ -278,7 +300,8 @@ public partial class MainWindow : Window
 
             try
             {
-                var derivedDir = Path.Combine(Path.GetDirectoryName(db) ?? ".", "derived");
+                var derivedDir = derivedDirectory;
+                Directory.CreateDirectory(derivedDir);
                 var derived = Path.Combine(derivedDir, "EnMicroMsg.manual.sc1.decrypted.db");
                 var matched = _manualDatabaseKeyIsRawHex
                     ? _sc1Decrypt.MatchesRawKey(db, _manualDatabaseKey)
@@ -316,7 +339,7 @@ public partial class MainWindow : Window
         }
 
         AddLog("Encrypted WCDB detected. Resolving bounded local read-only key candidates...");
-        _credential = await _credentialResolver.ResolveAsync(db);
+        _credential = await _credentialResolver.ResolveAsync(db, derivedDirectory: derivedDirectory);
         if (!_credential.Success) return null;
         if (!string.IsNullOrWhiteSpace(_credential.DecryptedPath))
         {
@@ -345,13 +368,16 @@ public partial class MainWindow : Window
             var integrityIssues = await _integrity.CheckAsync(_latestSnapshotDirectory);
             if (integrityIssues.Count > 0)
                 throw new InvalidDataException("快照完整性检查未通过：" + string.Join("；", integrityIssues));
-            var db = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
-            var info = await _dbInspector.InspectAsync(db);
-            _currentDbPath = db;
+            var pristineDb = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
+            var info = await _dbInspector.InspectAsync(pristineDb);
             AddLog($"DB inspect: {info.Status}; {info.Size:N0} bytes.");
             AddLog($"DB header: {info.HeaderHex[..Math.Min(32, info.HeaderHex.Length)]}...");
 
-            var options = await ResolveDatabaseOptionsAsync(db, info.AppearsEncrypted);
+            var db = await OpenSnapshotDatabaseAsync(_latestSnapshotDirectory);
+            _currentDbPath = db;
+            var options = await ResolveDatabaseOptionsAsync(
+                db, info.AppearsEncrypted,
+                Path.Combine(_latestSnapshotDirectory, "derived"));
             if (options is null)
             {
                 AddLog("Automatic credential resolution did not open this WCDB snapshot.");
@@ -371,6 +397,10 @@ public partial class MainWindow : Window
             _currentMessages = Array.Empty<WeChatMessage>();
             SetAddButtonsEnabled(false);
             AddLog($"Loaded {conversations.Count:N0} conversations from the snapshot.");
+            var postIssues = await _integrity.CheckAsync(_latestSnapshotDirectory);
+            AddLog(postIssues.Count == 0
+                ? "Snapshot stayed read-only: manifest, sizes and SHA-256 values still match."
+                : "WARNING: snapshot files changed during analysis: " + string.Join("; ", postIssues));
         }
         catch (Exception ex)
         {
@@ -490,10 +520,12 @@ public partial class MainWindow : Window
                 throw new InvalidDataException(
                     "新快照完整性检查失败：" + string.Join("；", integrity));
 
-            var db = Path.Combine(snapshot.DirectoryPath, "EnMicroMsg.db");
-            var info = await _dbInspector.InspectAsync(db);
+            var pristineDb = Path.Combine(snapshot.DirectoryPath, "EnMicroMsg.db");
+            var info = await _dbInspector.InspectAsync(pristineDb);
+            var db = await OpenSnapshotDatabaseAsync(snapshot.DirectoryPath);
             _currentDbPath = db;
-            var options = await ResolveDatabaseOptionsAsync(db, info.AppearsEncrypted);
+            var options = await ResolveDatabaseOptionsAsync(
+                db, info.AppearsEncrypted, Path.Combine(snapshot.DirectoryPath, "derived"));
             if (options is null)
                 throw new InvalidOperationException(
                     "数据库仍未能以受支持的只读方式打开。快照已保留，可继续密钥诊断。");
@@ -529,6 +561,40 @@ public partial class MainWindow : Window
             if (sampleTextMessages == 0)
                 throw new InvalidDataException("已读取消息，但抽样中没有识别到文字消息，阶段三验收不能通过。");
 
+            // Broad census pass: every conversation, bounded page size, aggregate counts only.
+            var censusMessages = new List<WeChatMessage>();
+            var censusFailures = 0;
+            foreach (var conversation in conversations)
+            {
+                try
+                {
+                    var loaded = await _dbReader.LoadMessagesAsync(
+                        activeDb, conversation.Username, options, 200);
+                    censusMessages.AddRange(loaded);
+                }
+                catch
+                {
+                    censusFailures++;
+                }
+            }
+            var census = _messageCensus.Build(conversations, censusMessages);
+            AddLog(
+                $"Message census: conversations={census.ConversationCount}; messages={census.MessageCount}; " +
+                $"groups={census.GroupConversationCount}; groupSenders={census.GroupSenderResolvedCount}; " +
+                $"unknown={census.UnknownMessageCount}; sensitive={census.SensitiveCount}; " +
+                $"failedConversations={censusFailures}.");
+            if (census.UnknownRawTypes.Count > 0)
+                AddLog("Unclassified raw types: " + string.Join(',',
+                    census.UnknownRawTypes.Take(10).Select(x => $"{x.RawType}x{x.Count}")));
+            if (census.MissingKinds.Count > 0)
+                AddLog("Message classes absent from this snapshot: " +
+                       string.Join(',', census.MissingKinds));
+
+            var postReadIssues = await _integrity.CheckAsync(snapshot.DirectoryPath);
+            AddLog(postReadIssues.Count == 0
+                ? "Snapshot stayed read-only after parsing: manifest, sizes and SHA-256 values still match."
+                : "WARNING: snapshot files changed during parsing: " + string.Join("; ", postReadIssues));
+
             _currentConversations = conversations;
             ConversationList.ItemsSource = conversations;
             _workspace = null;
@@ -544,6 +610,7 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(output);
             var reportPath = Path.Combine(output,
                 $"stage3-acceptance-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            var censusPath = Path.ChangeExtension(reportPath, ".census.json");
             var report =
                 "WXDataStudio Stage 3 Read-only Acceptance\n" +
                 $"Time: {DateTimeOffset.Now:O}\n" +
@@ -557,11 +624,22 @@ public partial class MainWindow : Window
                 $"Conversations: {conversations.Count}\n" +
                 $"Sample messages (first 5 conversations, max 50 each): {sampleMessages}\n" +
                 $"Sample text messages: {sampleTextMessages}\n" +
+                "Census (all conversations, max 200 messages each):\n" +
+                census.ToText() +
+                $"Census conversation read failures: {censusFailures}\n" +
+                $"Snapshot integrity after parsing: " +
+                $"{(postReadIssues.Count == 0 ? "unchanged" : string.Join("; ", postReadIssues))}\n" +
                 "Phone write-back: DISABLED\n";
             await File.WriteAllTextAsync(reportPath, report);
+            await File.WriteAllTextAsync(censusPath, census.ToJson());
             AddLog($"Stage3 acceptance passed: conversations={conversations.Count}; sampleMessages={sampleMessages}.");
             MessageBox.Show(
-                $"阶段三只读验收通过。\n\n会话：{conversations.Count}\n抽样消息：{sampleMessages}\n抽样文字：{sampleTextMessages}\n\n报告：\n{reportPath}",
+                $"阶段三只读验收通过。\n\n会话：{conversations.Count}" +
+                $"\n抽样消息：{sampleMessages}（文字 {sampleTextMessages}）" +
+                $"\n普查消息：{census.MessageCount}" +
+                $"\n未知类型：{census.UnknownMessageCount}" +
+                $"\n交易/红包类只读：{census.SensitiveCount}" +
+                $"\n\n报告：\n{reportPath}\n{censusPath}",
                 "阶段三验收通过", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)

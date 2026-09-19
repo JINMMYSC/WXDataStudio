@@ -25,9 +25,15 @@ public sealed class DatabaseCredentialResolver
         _candidates = candidates;
     }
 
-    public async Task<DatabaseCredentialResolution> ResolveAsync(string databasePath)
+    public async Task<DatabaseCredentialResolution> ResolveAsync(
+        string databasePath,
+        string? snapshotDirectory = null,
+        string? derivedDirectory = null)
     {
-        var candidates = await _candidates.BuildAsync(Path.GetDirectoryName(databasePath));
+        // Candidate discovery reads the snapshot's support files, while the database
+        // itself is expected to be a read-session working copy of that snapshot.
+        snapshotDirectory ??= Path.GetDirectoryName(databasePath);
+        var candidates = await _candidates.BuildAsync(snapshotDirectory);
         if (candidates.Count == 0)
             return new(false, null, 0, "none",
                 "No bounded device-derived key candidates were available.");
@@ -80,9 +86,9 @@ public sealed class DatabaseCredentialResolver
             {
                 if (_sc1.MatchesPassword(databasePath, candidate.Password))
                 {
-                    var derivedDir = Path.Combine(
-                        Path.GetDirectoryName(databasePath) ?? ".",
-                        "derived");
+                    var derivedDir = derivedDirectory ?? Path.Combine(
+                        Path.GetDirectoryName(databasePath) ?? ".", "derived");
+                    Directory.CreateDirectory(derivedDir);
                     var output = Path.Combine(derivedDir, "EnMicroMsg.sc1.decrypted.db");
                     await _sc1.DecryptWithPasswordAsync(databasePath, candidate.Password, output);
                     var schema = await _reader.DetectSchemaAsync(
