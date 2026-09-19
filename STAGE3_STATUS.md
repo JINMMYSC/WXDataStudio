@@ -1,6 +1,6 @@
 # WXDataStudio v0.3 Stage 3 status
 
-Stage 3 is implemented as a workspace feature set. Snapshots stay immutable; editing happens in a local workspace copy, and the phone write-back channel is under construction (page-level re-encryption already implemented and round-trip verified).
+Stage 3 is implemented as a workspace feature set. Snapshots stay immutable, editing happens in a local workspace copy, and the phone write-back channel is implemented and verified end to end on the locked MIX 2S.
 
 ## Implemented
 
@@ -23,6 +23,7 @@ Stage 3 is implemented as a workspace feature set. Snapshots stay immutable; edi
 - Payment, transfer and red-packet classes are labelled transaction-class and are editable for recovering deleted records; every change is audited.
 - Legacy SQLCipher1 page re-encryption with the original salt, used by the upcoming restore channel.
 - Snapshot write-ahead log folding with generation-salt filtering and a SQLite integrity gate: the fold is only accepted when SQLite validates the resulting image.
+- Restore channel (`PhoneRestoreService` + `WorkspaceDatabaseWriter`): writes workspace edits into a copy of the plaintext database, re-encrypts it with the phone's own salt and key, proves the image decrypts back byte-for-byte, creates a local rollback package, backs the device database up as `.wxds-backup-<stamp>`, installs the new image with ownership/permissions/SELinux intact, restarts WeChat and reads the database back to verify integrity and content.
 - Local workspace additions for text, images, video, voice, files, emoji, location/card, contact card, link, and quote messages.
 - Workspace media import copies selected files into stable workspace-owned storage.
 - Workspace media replacement is restricted to media-capable message classes.

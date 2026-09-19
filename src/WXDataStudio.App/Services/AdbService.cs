@@ -73,6 +73,9 @@ public sealed class AdbService
     public Task<CommandResult> PullAsync(string remotePath, string localPath) =>
         RunAsync($"pull \"{remotePath}\" \"{localPath}\"");
 
+    public Task<CommandResult> PushAsync(string localPath, string remotePath) =>
+        RunAsync($"push \"{localPath}\" \"{remotePath}\"");
+
     public Task<CommandResult> ShellAsync(string command) =>
         RunAsync($"shell {command}");
 

@@ -630,6 +630,83 @@ using (var exportJson = System.Text.Json.JsonDocument.Parse(
         "export json must mark transaction-class records");
 }
 
+// Workspace to database writer, then SC1 re-encryption round trip: the restore
+// channel must produce a database that decrypts back to what we wrote.
+var writeDbPath = Path.Combine(root, "write-target.db");
+await using (var connection = new SqliteConnection(
+    $"Data Source={writeDbPath};Pooling=False"))
+{
+    await connection.OpenAsync();
+    foreach (var sql in new[]
+    {
+        "PRAGMA page_size=1024;",
+        "VACUUM;",
+        """
+        CREATE TABLE message(msgId INTEGER PRIMARY KEY, msgSvrId INTEGER, talker TEXT, isSend INTEGER,
+            type INTEGER, status INTEGER, createTime INTEGER, msgSeq INTEGER, content TEXT,
+            imgPath TEXT, reserved TEXT);
+        """,
+        "INSERT INTO message VALUES (1,101,'alice',0,1,3,1726500000,1,'hello',NULL,NULL);",
+        "INSERT INTO message VALUES (2,102,'alice',0,1,3,1726500001,2,'world',NULL,NULL);"
+    })
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        await cmd.ExecuteNonQueryAsync();
+    }
+}
+Assert(new FileInfo(writeDbPath).Length > 0 && new FileInfo(writeDbPath).Length % 1024 == 0,
+    "smoke database fixture must use 1024-byte pages");
+
+var writeService = new WorkspaceService();
+var writeWorkspace = writeService.Create(root, conversations[0], new[]
+{
+    new WeChatMessage
+    {
+        LocalId = 1, ConversationId = "alice", Kind = MessageKind.Text,
+        CreateTime = 1_726_500_000, Content = "hello"
+    },
+    new WeChatMessage
+    {
+        LocalId = 2, ConversationId = "alice", Kind = MessageKind.Text,
+        CreateTime = 1_726_500_001, Content = "world"
+    }
+});
+writeService.EditContent(writeWorkspace, 1, "recovered hello");
+writeService.EditTime(writeWorkspace, 2, 1_726_500_100);
+var recoveredRow = writeService.AddMessage(
+    writeWorkspace, MessageKind.Text, "recovered new row");
+Assert(recoveredRow.IsNew, "recovered row must be marked as new");
+
+var writeResult = await new WorkspaceDatabaseWriter().ApplyAsync(writeDbPath, writeWorkspace);
+Assert(writeResult.Updated == 2, "writer must update both edited rows");
+Assert(writeResult.Inserted == 1, "writer must insert the recovered row");
+Assert((await WorkspaceDatabaseWriter.IntegrityCheckAsync(writeDbPath)) == "ok",
+    "written database failed its integrity check");
+Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.Image) == 3, "image raw type mismatch");
+Assert(WorkspaceDatabaseWriter.MapRawType(MessageKind.RedPacket) == 49, "red packet raw type mismatch");
+
+var writtenRows = await new WeChatDatabaseReader().LoadMessagesAsync(
+    writeDbPath, "alice", new DatabaseOpenOptions { ReadOnly = true });
+Assert(writtenRows.Any(x => x.Content == "recovered hello"), "content edit was not written");
+Assert(writtenRows.Any(x => x.CreateTime == 1_726_500_100), "time edit was not written");
+Assert(writtenRows.Any(x => x.Content == "recovered new row" && x.IsOutgoing),
+    "recovered row was not written as an outgoing message");
+
+var sc1Service = new LegacySc1DatabaseService();
+var saltSource = Path.Combine(root, "salt-source.bin");
+var saltBytes = new byte[1024];
+for (var i = 0; i < 16; i++) saltBytes[i] = (byte)(i + 1);
+await File.WriteAllBytesAsync(saltSource, saltBytes);
+var encryptedPath = Path.Combine(root, "write-target.enc.db");
+var decryptedPath = Path.Combine(root, "write-target.roundtrip.db");
+await sc1Service.EncryptWithPasswordAsync(writeDbPath, saltSource, "smoke-passphrase", encryptedPath);
+Assert(new FileInfo(encryptedPath).Length == new FileInfo(writeDbPath).Length,
+    "encrypted image size mismatch");
+await sc1Service.DecryptWithPasswordAsync(encryptedPath, "smoke-passphrase", decryptedPath, foldWal: false);
+Assert(await LegacySc1DatabaseService.PayloadsMatchAsync(writeDbPath, decryptedPath),
+    "re-encrypted database did not decrypt back to the edited image");
+
 var workspacePath = await workspaceService.SaveAsync(workspace, root);
 var loaded = await workspaceService.LoadAsync(workspacePath);
 Assert(loaded.Messages.Single(x => x.LocalId == 1).Content == "edited hello", "workspace persistence mismatch");

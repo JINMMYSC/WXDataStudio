@@ -206,6 +206,8 @@
                                     ToolTip="把右侧的正文、附件和时间改动写入工作副本 JSON（不保存就不会保留）"/>
                             <Button Content="撤销" Padding="12,7" IsEnabled="False" x:Name="UndoButton" Click="OnUndoWorkspaceMessage"
                                     ToolTip="把选中消息恢复为原始内容；新增的消息会被删除"/>
+                            <Button Content="写回手机" Padding="12,7" Margin="8,0,0,0" IsEnabled="False" x:Name="WriteBackButton" Click="OnWriteBackToPhone"
+                                    ToolTip="把工作副本的改动写回安卓微信：生成加密数据库、手机侧备份、推送、重启微信并回读验证"/>
                         </WrapPanel>
                         <TextBlock Text="当前适配器：wechat-android-8.0.76-3141" Margin="0,9,0,0" FontSize="11" Foreground="#6A737D"/>
                         <TextBlock Text="真实写回尚未开启；先完成解析、快照、回滚和一致性验证。" Foreground="#9A6700" FontSize="11" TextWrapping="Wrap"/>

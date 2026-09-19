@@ -331,8 +331,10 @@ public sealed class LegacySc1DatabaseService
             {
                 var page = new byte[PageSize];
                 var pageNumber = 1;
-                while (await ReadPageAsync(input, page) is { } filled)
+                while (true)
                 {
+                    var filled = await ReadPageAsync(input, page);
+                    if (filled == 0) break;
                     if (filled != PageSize)
                         throw new InvalidDataException(
                             "Plaintext database ends with a partial page.");
@@ -480,5 +482,34 @@ public sealed class LegacySc1DatabaseService
         if (page is null || page.Length < PageSize) return false;
         if (!page.AsSpan(0, 16).SequenceEqual(SqliteMagic)) return false;
         return page[21] == 64 && page[22] == 32 && page[23] == 32;
+    }
+
+    /// <summary>
+    /// Compares two page images while ignoring the 16-byte reserve of every page.
+    /// That reserve holds the per-page IV in the encrypted file and is unused in a
+    /// plaintext image, so it is the only region a round trip may normalise.
+    /// </summary>
+    public static async Task<bool> PayloadsMatchAsync(
+        string leftPath, string rightPath, CancellationToken cancellationToken = default)
+    {
+        var left = new FileInfo(leftPath);
+        var right = new FileInfo(rightPath);
+        if (left.Length != right.Length || left.Length % PageSize != 0) return false;
+
+        await using var leftStream = File.Open(leftPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await using var rightStream = File.Open(rightPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var leftPage = new byte[PageSize];
+        var rightPage = new byte[PageSize];
+        var pages = (int)(left.Length / PageSize);
+        for (var page = 0; page < pages; page++)
+        {
+            await leftStream.ReadExactlyAsync(leftPage, cancellationToken);
+            await rightStream.ReadExactlyAsync(rightPage, cancellationToken);
+            var start = page == 0 ? 16 : 0;
+            if (!leftPage.AsSpan(start, PageSize - ReserveSize - start)
+                    .SequenceEqual(rightPage.AsSpan(start, PageSize - ReserveSize - start)))
+                return false;
+        }
+        return true;
     }
 }

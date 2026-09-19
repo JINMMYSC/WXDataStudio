@@ -751,6 +751,110 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Writes the workspace back to the phone: edited plaintext database,
+    /// re-encrypted with the phone's own salt and key, device-side backup,
+    /// install, WeChat restart and read-back verification.
+    /// </summary>
+    private async void OnWriteBackToPhone(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_workspace is null)
+            {
+                MessageBox.Show("请先选择会话并点【工作副本】，再写回手机。", "写回手机",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            _device ??= await _adb.ProbeAsync();
+            if (_device is null || !_device.RootAvailable ||
+                string.IsNullOrWhiteSpace(_device.MainDatabasePath))
+            {
+                MessageBox.Show("请先点【设备】检测手机，写回需要 Root 与数据库路径。", "写回手机",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
+            {
+                MessageBox.Show("还没有可用快照。", "写回手机",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var encryptedPath = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
+            var derivedDirectory = Path.Combine(_latestSnapshotDirectory, "derived");
+            Directory.CreateDirectory(derivedDirectory);
+            var plaintextPath = _credential?.DecryptedPath;
+            if (string.IsNullOrWhiteSpace(plaintextPath))
+            {
+                plaintextPath = Path.Combine(derivedDirectory, "EnMicroMsg.restore-source.db");
+                var sc1 = new LegacySc1DatabaseService();
+                if (_manualDatabaseKeyIsRawHex && !string.IsNullOrWhiteSpace(_manualDatabaseKey))
+                    await sc1.DecryptWithRawKeyAsync(encryptedPath, _manualDatabaseKey, plaintextPath);
+                else if (!string.IsNullOrWhiteSpace(_credential?.Password))
+                    await sc1.DecryptWithPasswordAsync(encryptedPath, _credential!.Password!, plaintextPath);
+                else if (!string.IsNullOrWhiteSpace(_manualDatabaseKey))
+                    await sc1.DecryptWithPasswordAsync(encryptedPath, _manualDatabaseKey, plaintextPath);
+                else
+                {
+                    MessageBox.Show(
+                        "没有可用于重新加密的数据库凭据，请先解析快照或输入数据库密钥。",
+                        "写回手机", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            var changes = _diffService.GetDiffs(_workspace);
+            var confirmation = MessageBox.Show(
+                $"即将把工作副本写回手机：\n\n" +
+                $"设备：{_device.Model}\n" +
+                $"会话：{_workspace.ConversationName}\n" +
+                $"消息：{_workspace.Messages.Count} 条\n" +
+                $"改动：{changes.Count} 项\n\n" +
+                "流程：生成加密数据库 → 手机侧备份原库 → 覆盖写入 → 修正权限 → 重启微信 → 回读校验。\n" +
+                "过程中微信会被强制停止。手机上的原库会以 .wxds-backup 前缀保留一份，可随时还原。\n\n" +
+                "确定继续吗？",
+                "写回手机确认", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (confirmation != MessageBoxResult.OK) return;
+
+            var request = new PhoneRestoreRequest(
+                _device,
+                _latestSnapshotDirectory,
+                plaintextPath,
+                encryptedPath,
+                _credential?.Password ?? (_manualDatabaseKeyIsRawHex ? null : _manualDatabaseKey),
+                _manualDatabaseKeyIsRawHex ? _manualDatabaseKey : null,
+                _workspace);
+
+            WriteBackButton.IsEnabled = false;
+            UpdateGuideHint("正在写回手机：生成数据库、备份、推送、重启微信并校验，请勿断开数据线。");
+            var result = await new PhoneRestoreService(_adb).RestoreAsync(request, AddLog);
+            AddLog($"Write-back finished: success={result.Success}; updated={result.UpdatedRows}; " +
+                   $"inserted={result.InsertedRows}; verified={result.VerifiedRows}.");
+            UpdateGuideHint(result.Success
+                ? "已写回手机并回读校验通过。可在微信里打开该会话确认。"
+                : "写回未完全成功，手机侧备份与本地回滚包都在，可按提示重试或还原。");
+            MessageBox.Show(
+                (result.Success ? "写回完成并通过回读校验。\n\n" : "写回未完全成功。\n\n") +
+                $"更新行：{result.UpdatedRows}\n新增行：{result.InsertedRows}\n" +
+                $"回读校验：{result.VerifiedRows}/{_workspace.Messages.Count}\n\n" +
+                $"工作目录：\n{result.WorkingDirectory}\n\n" +
+                (result.RollbackPackagePath is null ? "" : $"本地回滚包：\n{result.RollbackPackagePath}\n\n") +
+                string.Join(Environment.NewLine, result.Steps.Select(x => $"{(x.Success ? "OK" : "!!")} {x.Name}: {x.Detail}")),
+                "写回手机", MessageBoxButton.OK,
+                result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Write-back failed: {ex.Message}");
+            MessageBox.Show(ex.Message, "写回手机失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            WriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
+        }
+    }
+
     private async void OnExportConversation(object sender, RoutedEventArgs e)
     {
         try
@@ -1315,6 +1419,7 @@ public partial class MainWindow : Window
         PropertyAttachment.IsReadOnly = !allow;
         EditButton.IsEnabled = allow;
         UndoButton.IsEnabled = allow;
+        WriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
         ReplaceMediaButton.IsEnabled = allow &&
             SelectedWorkspaceMessage is { } workspaceMessage &&
             MessageKindPolicy.HasExternalMedia(workspaceMessage.Kind);

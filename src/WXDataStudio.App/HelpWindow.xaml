@@ -26,7 +26,7 @@
                     <StackPanel>
                         <TextBlock Text="先明确三条边界" FontWeight="SemiBold" Foreground="#7A5A00"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#7A5A00"
-                                   Text="1) 手机原始数据库不会被本软件悄悄改写：编辑先写本地工作副本，写回手机需要你显式确认，并自动生成回滚包。&#10;2) 交易类记录（转账、红包、收付款）与其它消息一样可以新增和修改，用于恢复误删内容；请只填写真实发生过的信息，改动都会记录在审计与差异里。&#10;3) iPhone 迁移仍请使用微信自带的聊天记录迁移功能。"/>
+                                   Text="1) 编辑先写本地工作副本；点【写回手机】并确认后才会推送到手机，推送前会自动生成回滚包并在手机侧留一份原库备份。&#10;2) 交易类记录（转账、红包、收付款）与其它消息一样可以新增和修改，用于恢复误删内容；请只填写真实发生过的信息，改动都会记录在审计与差异里。&#10;3) iPhone 迁移仍请使用微信自带的聊天记录迁移功能。"/>
                     </StackPanel>
                 </Border>
 
@@ -124,17 +124,27 @@
                     </StackPanel>
                 </Border>
 
+                <Border Background="#E9F7EF" CornerRadius="6" BorderBrush="#B7E0C6" BorderThickness="1" Padding="16" Margin="0,0,0,10">
+                    <StackPanel>
+                        <TextBlock Text="第 10 步 · 写回手机（数据恢复）" FontSize="16" FontWeight="SemiBold" Foreground="#1B5E20"/>
+                        <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
+                                   Text="在工作副本里改完、核对过差异之后，点编辑器底部的【写回手机】。软件会：把改动写进明文数据库 → 用手机原来的盐值和密钥重新加密 → 建立本地回滚包 → 强制停止微信并在手机里备份原库 → 覆盖写入并修正属主、权限和 SELinux 上下文 → 重启微信 → 回读数据库校验改动已生效。"/>
+                        <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#2E6B3A"
+                                   Text="手机上的原库会以 .wxds-backup-时间戳 保存在同一目录，随时可以还原。写回过程中不要断开数据线。"/>
+                    </StackPanel>
+                </Border>
+
                 <Border Background="White" CornerRadius="6" BorderBrush="#E2E4E8" BorderThickness="1" Padding="16" Margin="0,0,0,10">
                     <StackPanel>
                         <TextBlock Text="常见问题" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="为什么新增/保存按钮是灰的？"/>
                         <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="还没打开工作副本（第 5 步）。打开后所有消息类型都能编辑，包括交易类记录。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="改完了，手机微信里为什么没变化？"/>
-                        <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="目前修改只写进电脑上的工作副本。写回手机需要把改动写进数据库再加密回写，这条通道正在实现；加密回写已经做完并通过往返校验，推送与验证流程还没完成。"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="改动先只在电脑上。点【写回手机】并确认后，软件才会写进手机数据库、重启微信，并把结果回读校验给你看。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="为什么有些图片、表情预览不了？"/>
                         <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="手机上没有缓存文件时无法定位到实物。消息本身和它的标识仍在，可正常浏览、编辑、导出。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="编辑会不会改坏原始数据和快照？"/>
-                        <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="不会。快照读取走的是校验过的副本，解析前后哈希一致；原始快照与手机数据库目前都不会被修改。写回通道完成时会先自动生成回滚包。"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="不会。快照读取走的是校验过的副本，解析前后哈希一致；写回前会先生成本地回滚包，并在手机里用 .wxds-backup-时间戳 备份原库，出问题可以马上还原。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="能删除微信里的记录吗？"/>
                         <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="不能。本工具不做删除，也不向手机数据库写回任何内容。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="导出的文件会不会被别人看到？"/>
