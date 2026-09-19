@@ -46,6 +46,7 @@ public partial class MainWindow : Window
     private string? _manualDatabaseKey;
     private bool _manualDatabaseKeyIsRawHex;
     private SnapshotReadSession? _readSession;
+    private bool _busy;
 
     public MainWindow()
     {
@@ -100,6 +101,28 @@ public partial class MainWindow : Window
     }
 
     private void SetStatus(string text) => StatusText.Text = text;
+
+    /// <summary>
+    /// Locks the editing surface while a write-back runs: the workspace must not
+    /// change between building the restore image and verifying the phone.
+    /// </summary>
+    private void SetBusy(bool busy)
+    {
+        _busy = busy;
+        if (ComposerBox is null) return;
+        ComposerBox.IsEnabled = !busy;
+        SendButton.IsEnabled = !busy;
+        SendAsBox.IsEnabled = !busy;
+        SenderNameBox.IsEnabled = !busy;
+        MessageList.IsEnabled = !busy;
+        ConversationList.IsEnabled = !busy;
+        SearchBox.IsEnabled = !busy;
+        MessageSearchBox.IsEnabled = !busy;
+        MessageFilter.IsEnabled = !busy;
+        SetAddButtonsEnabled(!busy);
+        if (busy) EditButton.IsEnabled = false;
+        if (busy) UndoButton.IsEnabled = false;
+    }
 
     private void ShowDetails()
     {
@@ -160,6 +183,7 @@ public partial class MainWindow : Window
     /// <summary>Types straight into the chat, like WeChat's composer.</summary>
     private async void OnSendMessage(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
         var text = ComposerBox.Text.Trim();
         if (text.Length == 0)
         {
@@ -224,6 +248,7 @@ public partial class MainWindow : Window
     /// <summary>Transfer / red packet / payment entry with amount and note fields.</summary>
     private async void OnAddMoneyMessage(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
         if (_workspace is null)
         {
             SetStatus("先在左边点一个聊天，再添加转账或红包。");
@@ -292,6 +317,7 @@ public partial class MainWindow : Window
 
     private async void OnBubbleSave(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
         if (BubbleOf(sender) is not { } bubble ||
             bubble.Source is not WorkspaceMessage message || _workspace is null)
             return;
@@ -341,6 +367,7 @@ public partial class MainWindow : Window
 
     private async void OnBubbleDelete(object sender, RoutedEventArgs e)
     {
+        if (_busy) return;
         if (BubbleOf(sender) is not { } bubble ||
             bubble.Source is not WorkspaceMessage message || _workspace is null)
             return;
@@ -1147,34 +1174,38 @@ public partial class MainWindow : Window
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (string.IsNullOrWhiteSpace(_latestSnapshotDirectory))
+            // Take a fresh base from the phone for every write-back. Reusing an
+            // older snapshot made repeated write-backs collide on message ids and
+            // verify against a state the phone no longer had.
+            SetBusy(true);
+            string encryptedPath;
+            string plaintextPath;
+            string snapshotDirectory;
+            try
             {
-                MessageBox.Show("还没有可用快照。", "写回手机",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
+                SetStatus("正在读取手机当前状态，作为这次写回的底稿…");
+                var snapshot = await _snapshots.CreateDatabaseSnapshotAsync(_device, AddLog);
+                snapshotDirectory = snapshot.DirectoryPath;
+                _latestSnapshotDirectory = snapshotDirectory;
+                encryptedPath = Path.Combine(snapshotDirectory, "EnMicroMsg.db");
+                var info = await _dbInspector.InspectAsync(encryptedPath);
+                var freshDb = await OpenSnapshotDatabaseAsync(snapshotDirectory);
+                var freshOptions = await ResolveDatabaseOptionsAsync(
+                    freshDb, info.AppearsEncrypted, Path.Combine(snapshotDirectory, "derived"));
+                if (freshOptions is null)
+                    throw new InvalidOperationException(
+                        "这次没能打开手机上的数据库，请稍后重试。");
 
-            var encryptedPath = Path.Combine(_latestSnapshotDirectory, "EnMicroMsg.db");
-            var derivedDirectory = Path.Combine(_latestSnapshotDirectory, "derived");
-            Directory.CreateDirectory(derivedDirectory);
-            var plaintextPath = _credential?.DecryptedPath;
-            if (string.IsNullOrWhiteSpace(plaintextPath))
+                plaintextPath = _credential?.DecryptedPath ?? freshDb;
+                if (string.IsNullOrWhiteSpace(plaintextPath))
+                    throw new InvalidOperationException("没有可用的明文底稿。");
+            }
+            catch (Exception ex)
             {
-                plaintextPath = Path.Combine(derivedDirectory, "EnMicroMsg.restore-source.db");
-                var sc1 = new LegacySc1DatabaseService();
-                if (_manualDatabaseKeyIsRawHex && !string.IsNullOrWhiteSpace(_manualDatabaseKey))
-                    await sc1.DecryptWithRawKeyAsync(encryptedPath, _manualDatabaseKey, plaintextPath);
-                else if (!string.IsNullOrWhiteSpace(_credential?.Password))
-                    await sc1.DecryptWithPasswordAsync(encryptedPath, _credential!.Password!, plaintextPath);
-                else if (!string.IsNullOrWhiteSpace(_manualDatabaseKey))
-                    await sc1.DecryptWithPasswordAsync(encryptedPath, _manualDatabaseKey, plaintextPath);
-                else
-                {
-                    MessageBox.Show(
-                        "没有可用于重新加密的数据库凭据，请先解析快照或输入数据库密钥。",
-                        "写回手机", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
+                SetBusy(false);
+                SetStatus("写回前读取手机失败：" + ex.Message);
+                MessageBox.Show(ex.Message, "写回手机", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
             }
 
             var changes = _diffService.GetDiffs(_workspace);
@@ -1198,7 +1229,7 @@ public partial class MainWindow : Window
 
             var request = new PhoneRestoreRequest(
                 _device,
-                _latestSnapshotDirectory,
+                snapshotDirectory,
                 plaintextPath,
                 encryptedPath,
                 _credential?.Password ?? (_manualDatabaseKeyIsRawHex ? null : _manualDatabaseKey),
@@ -1242,6 +1273,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            SetBusy(false);
             UpdateWriteBackState();
         }
     }
@@ -1563,6 +1595,7 @@ public partial class MainWindow : Window
     private async Task AddWorkspaceMessageAsync(
         MessageKind kind, string content, string? fileFilter = null)
     {
+        if (_busy) return;
         if (_workspace is null)
         {
             MessageBox.Show("请先选择会话并点击“工作副本”。", "新增消息",
