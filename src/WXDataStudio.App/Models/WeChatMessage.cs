@@ -17,7 +17,8 @@ public sealed class WeChatMessage
     public string? LvBufferHex { get; init; }
     public MessageKind Kind { get; init; }
     public string DisplayTime => SafeFormatTime(CreateTime);
-    public bool Sensitive => MessageKindPolicy.IsSensitive(Kind);
+    /// <summary>Transaction-class record: labelled in the UI, still editable.</summary>
+    public bool IsTransaction => MessageKindPolicy.IsTransaction(Kind);
     public string Direction => IsOutgoing ? "我发送" : "对方发送";
     public string StatusText => RawStatus.ToString();
     public override string ToString() => $"[{DisplayTime}] {Direction} · {Kind} · {Preview(Content)}";

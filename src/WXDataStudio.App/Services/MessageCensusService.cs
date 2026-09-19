@@ -27,7 +27,8 @@ public sealed class MessageCensus
     public int IncomingCount { get; init; }
     public int GroupMessageCount { get; init; }
     public int GroupSenderResolvedCount { get; init; }
-    public int SensitiveCount { get; init; }
+    /// <summary>Transfer / red-packet / payment records; labelled, not restricted.</summary>
+    public int TransactionCount { get; init; }
     public IReadOnlyList<MessageKindCount> Kinds { get; init; } = Array.Empty<MessageKindCount>();
     public IReadOnlyList<UnknownMessageType> UnknownRawTypes { get; init; } =
         Array.Empty<UnknownMessageType>();
@@ -54,7 +55,7 @@ public sealed class MessageCensus
         text.AppendLine($"incoming={IncomingCount}");
         text.AppendLine($"group-messages={GroupMessageCount}");
         text.AppendLine($"group-sender-resolved={GroupSenderResolvedCount}");
-        text.AppendLine($"sensitive-readonly={SensitiveCount}");
+        text.AppendLine($"transaction-records={TransactionCount}");
         foreach (var kind in Kinds)
             text.AppendLine(
                 $"kind-{kind.Kind.ToString().ToLowerInvariant()}=" +
@@ -82,7 +83,7 @@ public sealed class MessageCensus
             incomingCount = IncomingCount,
             groupMessageCount = GroupMessageCount,
             groupSenderResolvedCount = GroupSenderResolvedCount,
-            sensitiveCount = SensitiveCount,
+            transactionCount = TransactionCount,
             kinds = Kinds.Select(x => new
             {
                 kind = x.Kind.ToString(),
@@ -164,7 +165,7 @@ public sealed class MessageCensusService
             GroupMessageCount = list.Count(IsGroupMessage),
             GroupSenderResolvedCount = list.Count(x =>
                 IsGroupMessage(x) && !x.IsOutgoing && !string.IsNullOrWhiteSpace(x.Sender)),
-            SensitiveCount = list.Count(x => x.Sensitive),
+            TransactionCount = list.Count(x => x.IsTransaction),
             Kinds = kinds,
             UnknownRawTypes = unknownTypes,
             AppMessageTypes = BuildAppMessageTypes(list, unknownOnly: false),

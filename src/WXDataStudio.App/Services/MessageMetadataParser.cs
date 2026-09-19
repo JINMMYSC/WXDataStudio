@@ -28,7 +28,7 @@ public static class MessageMetadataParser
             MiniProgramPath = First(weapp, "pagepath", "path"),
             ContactUserName = kind == MessageKind.ContactCard ? First(text, "username", "encryptusername") : "",
             ContactNickName = kind == MessageKind.ContactCard ? First(text, "nickname", "fullpy") : "",
-            TransactionType = MessageKindPolicy.IsSensitive(kind) ? kind.ToString() : "",
+            TransactionType = MessageKindPolicy.IsTransaction(kind) ? kind.ToString() : "",
             TransactionAmount = First(text, "feedesc", "fee", "amount"),
             TransactionStatus = First(text, "pay_memo", "receiver_name", "paysubtype", "state"),
             TransactionMemo = First(text, "pay_memo", "remark", "payinfo", "desc")

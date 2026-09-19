@@ -122,8 +122,11 @@ const string flaggedTransferXml = "<msg><appmsg><type>2000</type><wcpayinfo><pay
 Assert(MessageTypeClassifier.Classify(285212721, flaggedTransferXml) == MessageKind.Transfer,
     "flagged transfer message must remain read-only classified");
 
-Assert(!MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer must stay read-only");
-Assert(!MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet must stay read-only");
+Assert(MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer records must be editable for recovery");
+Assert(MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet records must be editable for recovery");
+Assert(MessageKindPolicy.IsTransaction(MessageKind.Transfer), "transfer must be labelled transaction-class");
+Assert(MessageKindPolicy.IsTransaction(MessageKind.RedPacket), "red packet must be labelled transaction-class");
+Assert(!MessageKindPolicy.IsTransaction(MessageKind.Text), "text must not be labelled transaction-class");
 Assert(MessageKindPolicy.IsEditable(MessageKind.Text), "text should be editable in workspace");
 
 var mediaDevice = new DeviceInfo
@@ -234,16 +237,11 @@ var sensitiveSource = new WeChatMessage
     Kind = MessageKind.Transfer
 };
 var sensitiveWorkspace = new WorkspaceService().Create(root, conversations[0], new[] { sensitiveSource });
-var sensitiveEditBlocked = false;
-try
-{
-    new WorkspaceService().EditContent(sensitiveWorkspace, 99, "changed");
-}
-catch (InvalidOperationException)
-{
-    sensitiveEditBlocked = true;
-}
-Assert(sensitiveEditBlocked, "existing sensitive record editing must be blocked");
+Assert(sensitiveWorkspace.Messages[0].IsTransaction, "transfer record must be labelled transaction-class");
+Assert(sensitiveWorkspace.Messages[0].CanEdit, "transaction records must be editable for recovery");
+new WorkspaceService().EditContent(sensitiveWorkspace, 99, "recovered transfer note");
+Assert(sensitiveWorkspace.Messages[0].Content == "recovered transfer note",
+    "transaction record content edit did not apply");
 
 var readinessDir = Path.Combine(root, "readiness");
 Directory.CreateDirectory(readinessDir);
@@ -370,27 +368,26 @@ var addedTextId = addedText.LocalId;
 workspaceService.Revert(workspace, addedTextId);
 Assert(workspace.Messages.All(x => x.LocalId != addedTextId), "new workspace message revert must remove the message");
 
-var sensitiveCreateBlocked = false;
-try
-{
-    workspaceService.AddMessage(workspace, MessageKind.Transfer, "not allowed");
-}
-catch (InvalidOperationException)
-{
-    sensitiveCreateBlocked = true;
-}
-Assert(sensitiveCreateBlocked, "sensitive workspace message creation must be blocked");
+var createdTransfer = workspaceService.AddMessage(workspace, MessageKind.Transfer, "recovered transfer");
+Assert(createdTransfer.Kind == MessageKind.Transfer && createdTransfer.IsTransaction,
+    "transaction-class message creation must be allowed and labelled");
+Assert(createdTransfer.CanEdit, "created transaction message must stay editable");
+workspaceService.Revert(workspace, createdTransfer.LocalId);
 
 workspaceService.EditContent(workspace, 1, "edited hello");
 workspaceService.EditTime(workspace, 1, messages[0].CreateTime + 60);
-Assert(workspace.Audit.Count == 5, "workspace audit mismatch");
+Assert(workspace.Audit.Any(x => x.Field == "content"), "workspace audit must record content edits");
+Assert(workspace.Audit.Any(x => x.Field == "createTime"), "workspace audit must record time edits");
+Assert(workspace.Audit.Any(x => x.Field == "create"), "workspace audit must record created messages");
+Assert(workspace.Audit.Count(x => x.Field == "delete-new") == 2,
+    "workspace audit must record both removed new messages");
 
 var diffService = new WorkspaceDiffService();
 var diffs = diffService.GetDiffs(workspace);
 Assert(diffs.Count >= 2, "workspace diff mismatch");
 
 // Batch timeline shift used by the editor's "shift 60s" action: the anchor and
-// later messages move, earlier messages stay, read-only records are skipped.
+// later messages move together, earlier messages stay put.
 var shiftWorkspace = workspaceService.Create(root, conversations[0], new[]
 {
     new WeChatMessage { LocalId = 11, ConversationId = "alice", Kind = MessageKind.Text, CreateTime = 1_726_600_000 },
@@ -405,21 +402,21 @@ var packet = WorkspaceMessage.From(new WeChatMessage
     CreateTime = 1_726_600_150,
     Content = "<msg><appmsg><type>2001</type></appmsg></msg>"
 });
-Assert(packet.Sensitive && !packet.CanEdit, "red packet workspace message must stay read-only");
+Assert(packet.IsTransaction && packet.CanEdit, "red packet record must be labelled but editable");
 shiftWorkspace.Messages.Add(packet);
 shiftWorkspace.Messages.Sort((a, b) => a.CreateTime.CompareTo(b.CreateTime));
 
 var beforeShift = shiftWorkspace.Messages.ToDictionary(x => x.LocalId, x => x.CreateTime);
 var (shifted, skipped) = workspaceService.ShiftTimeline(shiftWorkspace, 12, 60);
-Assert(shifted == 2 && skipped == 1, "batch shift must move the tail and skip read-only records");
+Assert(shifted == 3 && skipped == 0, "batch shift must move the whole tail");
 Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 11).CreateTime == beforeShift[11],
     "batch shift must not touch messages before the anchor");
 Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 12).CreateTime == beforeShift[12] + 60,
     "batch shift must move the anchor message");
 Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 13).CreateTime == beforeShift[13] + 60,
     "batch shift must move later messages");
-Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 90).CreateTime == beforeShift[90],
-    "batch shift must not touch read-only records");
+Assert(shiftWorkspace.Messages.Single(x => x.LocalId == 90).CreateTime == beforeShift[90] + 60,
+    "batch shift must move transaction-class records too");
 
 var catalogRoot = Path.Combine(root, "snapshots");
 var incompleteDir = Path.Combine(catalogRoot, "20260101-000000");
@@ -485,7 +482,7 @@ Assert(census.MessageCount == 5, "census message count mismatch");
 Assert(census.IncomingCount == 4 && census.OutgoingCount == 1, "census direction count mismatch");
 Assert(census.GroupMessageCount == 2, "census group message count mismatch");
 Assert(census.GroupSenderResolvedCount == 1, "census group sender resolution mismatch");
-Assert(census.SensitiveCount == 1, "census sensitive count mismatch");
+Assert(census.TransactionCount == 1, "census transaction count mismatch");
 Assert(census.CountOf(MessageKind.Text) == 2, "census text count mismatch");
 Assert(census.UnknownMessageCount == 1, "census unknown count mismatch");
 Assert(census.UnknownRawTypes.Single().RawType == 318767153, "census unknown raw type mismatch");
@@ -619,7 +616,7 @@ Assert(!exportHtml.Contains("<script>alert", StringComparison.Ordinal), "export 
 Assert(exportHtml.Contains("assets/"), "export html must reference the copied asset");
 Assert(exportHtml.Contains("report.pdf"), "export html must describe file attachments");
 Assert(!exportHtml.Contains("<appmsg>", StringComparison.Ordinal), "export html must not dump raw xml");
-Assert(exportHtml.Contains("只读"), "export html must label read-only records");
+Assert(exportHtml.Contains("交易类"), "export html must label transaction-class records");
 Assert(Directory.GetFiles(Path.Combine(export.DirectoryPath, "assets")).Length == 1,
     "export asset directory mismatch");
 using (var exportJson = System.Text.Json.JsonDocument.Parse(
@@ -629,8 +626,8 @@ using (var exportJson = System.Text.Json.JsonDocument.Parse(
     Assert(rootElement.GetProperty("messageCount").GetInt32() == 5, "export json message count mismatch");
     Assert(rootElement.GetProperty("attachments").GetProperty("localFiles").GetInt32() == 1,
         "export json attachment summary mismatch");
-    Assert(rootElement.GetProperty("messages")[3].GetProperty("readOnly").GetBoolean(),
-        "export json must mark read-only records");
+    Assert(rootElement.GetProperty("messages")[3].GetProperty("transactionClass").GetBoolean(),
+        "export json must mark transaction-class records");
 }
 
 var workspacePath = await workspaceService.SaveAsync(workspace, root);

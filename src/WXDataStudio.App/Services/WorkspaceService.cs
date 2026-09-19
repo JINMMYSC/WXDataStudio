@@ -87,7 +87,6 @@ public sealed class WorkspaceService
     {
         var msg = workspace.Messages.FirstOrDefault(x => x.LocalId == messageId)
             ?? throw new KeyNotFoundException($"Message {messageId} was not found.");
-        if (msg.Sensitive) return;
         if (msg.IsNew)
         {
             workspace.Audit.Add(new WorkspaceAuditEntry
@@ -160,7 +159,7 @@ public sealed class WorkspaceService
         var msg = workspace.Messages.FirstOrDefault(x => x.LocalId == id)
             ?? throw new KeyNotFoundException($"Message {id} was not found.");
         if (!msg.CanEdit)
-            throw new InvalidOperationException("Sensitive payment-class records are read-only.");
+            throw new InvalidOperationException("This workspace message cannot be edited.");
         return msg;
     }
 

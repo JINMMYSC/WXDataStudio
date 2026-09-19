@@ -1,6 +1,6 @@
 # WXDataStudio v0.3 Stage 3 status
 
-Stage 3 is implemented as a safe workspace/read-only feature set. Real phone database write-back remains disabled.
+Stage 3 is implemented as a workspace feature set. Snapshots stay immutable; editing happens in a local workspace copy, and the phone write-back channel is under construction (page-level re-encryption already implemented and round-trip verified).
 
 ## Implemented
 
@@ -20,7 +20,9 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Group-chat sender extraction for incoming chatroom messages.
 - Message parsing for text, image, voice, video, emoji, location, file, links, mini programs, contact cards, quotes, system/call records, transfer, red packet, and payment classes.
 - Extended quote / mini-program / contact-card metadata fields in the UI.
-- Payment, transfer, and red-packet classes are enforced read-only.
+- Payment, transfer and red-packet classes are labelled transaction-class and are editable for recovering deleted records; every change is audited.
+- Legacy SQLCipher1 page re-encryption with the original salt, used by the upcoming restore channel.
+- Snapshot write-ahead log folding with generation-salt filtering and a SQLite integrity gate: the fold is only accepted when SQLite validates the resulting image.
 - Local workspace additions for text, images, video, voice, files, emoji, location/card, contact card, link, and quote messages.
 - Workspace media import copies selected files into stable workspace-owned storage.
 - Workspace media replacement is restricted to media-capable message classes.
@@ -56,7 +58,7 @@ Verified:
 3. Schema: message, conversation and contact tables all detected.
 4. Real data: 37 conversations (5 groups), 558 messages read across every conversation with 0 conversation read failures.
 5. Message-class census: link 242 (appmsg 5 ×229, appmsg 51 ×12, appmsg 62 ×1), image 136, text 111, voice 22, file 17 (appmsg 6), video 15, unknown 4, quote 4 (appmsg 57), emoji 2, system 2, location 1, contact card 1, red packet 1. Group-sender resolution: 158 of 198 incoming group messages.
-6. Read-only enforcement: the red-packet record is classified sensitive and cannot be edited or created in a workspace. No transfer or payment rows exist in this snapshot.
+6. Transaction labelling: the red-packet record is labelled transaction-class and is editable for recovery. No transfer or payment rows exist in this snapshot.
 7. Media mapping sample: image 12/12, voice 12/12, video 10/10 resolved to real files.
 8. Rollback: a rollback package was generated from the snapshot and its 4 entries matched the snapshot files by length and SHA-256.
 9. Immutability: manifest, sizes and SHA-256 values were unchanged after the full parse.

@@ -3,6 +3,26 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WXDataStudio" Height="900" Width="1540" MinHeight="720" MinWidth="1180"
         WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <Style x:Key="ChatBubbleStyle" TargetType="Border">
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#E2E4E8"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Margin" Value="4,3,4,3"/>
+            <Setter Property="MaxWidth" Value="560"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
+                    <Setter Property="HorizontalAlignment" Value="Right"/>
+                    <Setter Property="Background" Value="#95EC69"/>
+                    <Setter Property="BorderBrush" Value="#86D95E"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
     <DockPanel Background="#F4F5F7">
         <Border DockPanel.Dock="Top" Background="White" BorderBrush="#DADDE2" BorderThickness="0,0,0,1" Padding="14,10">
             <Grid>
@@ -15,16 +35,21 @@
                     <Button Content="快照" Padding="14,7" Margin="0,0,8,0" Click="OnCreateSnapshot" ToolTip="第 2 步：暂停微信并创建只读本地快照（含大小与 SHA-256 清单）"/>
                     <Button Content="解析快照" Padding="14,7" Margin="0,0,8,0" Click="OnAnalyzeSnapshot" ToolTip="第 3 步：只读打开快照数据库并读取会话列表"/>
                     <Button Content="选择快照" Padding="14,7" Margin="0,0,8,0" Click="OnSelectSnapshot" ToolTip="切换到其它目录中已有的快照"/>
-                    <Button Content="数据库诊断" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseDiagnostics" ToolTip="查看主库大小、WAL/SHM 与完整性检查结果"/>
-                    <Button Content="数据库密钥" Padding="14,7" Margin="0,0,8,0" Click="OnDatabaseKey" ToolTip="手工输入文本口令或 Raw Hex；只在本次进程内存中保存"/>
-                    <Button Content="密钥诊断" Padding="14,7" Margin="0,0,8,0" Click="OnKeyDiagnostics" ToolTip="查看可用候选来源数量，不显示密钥、UIN 或设备标识的值"/>
                     <Button Content="工作副本" Padding="14,7" Margin="0,0,8,0" Click="OnOpenWorkspace" ToolTip="第 5 步：打开可编辑副本；不打开就无法新增或修改聊天记录"/>
                     <Button Content="差异" Padding="14,7" Margin="0,0,8,0" Click="OnShowDiff" ToolTip="查看当前工作副本的全部改动"/>
-                    <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck" ToolTip="核对快照文件的大小与 SHA-256"/>
-                    <Button Content="回滚包" Padding="14,7" Margin="0,0,8,0" Click="OnCreateRollbackPackage" ToolTip="把快照打包成 ZIP 回滚备份"/>
                     <Button Content="迁移检查" Padding="14,7" Margin="0,0,8,0" Click="OnMigrationCheck" ToolTip="生成迁移准备报告（JSON + 文本）"/>
                     <Button Content="导出会话" Padding="14,7" Margin="0,0,8,0" Click="OnExportConversation" ToolTip="第 9 步：把当前会话导出为 HTML 记录与 JSON 数据，只保存在本机"/>
-                    <Button Content="阶段三验收" Padding="14,7" Click="OnStage3Acceptance" ToolTip="执行一次只读真机自检并写出验收报告"/>
+                    <Menu Background="Transparent" VerticalAlignment="Center" Padding="0" Margin="0,0,4,0">
+                        <MenuItem Header="更多" Padding="12,7" ToolTip="诊断、完整性检查、回滚包与真机自检">
+                            <MenuItem Header="数据库诊断" Click="OnDatabaseDiagnostics"/>
+                            <MenuItem Header="数据库密钥" Click="OnDatabaseKey"/>
+                            <MenuItem Header="密钥诊断" Click="OnKeyDiagnostics"/>
+                            <MenuItem Header="完整性检查" Click="OnRunIntegrityCheck"/>
+                            <MenuItem Header="回滚包" Click="OnCreateRollbackPackage"/>
+                            <Separator/>
+                            <MenuItem Header="阶段三只读验收" Click="OnStage3Acceptance"/>
+                        </MenuItem>
+                    </Menu>
                 </WrapPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse x:Name="DeviceIndicator" Width="9" Height="9" Fill="#8C959F" Margin="0,0,7,0"/>
@@ -81,7 +106,7 @@
                         <ComboBox Grid.Column="1" Width="150" SelectedIndex="0" x:Name="MessageFilter" SelectionChanged="OnMessageFilterChanged">
                             <ComboBoxItem Content="全部消息"/><ComboBoxItem Content="文字"/>
                             <ComboBoxItem Content="图片/媒体"/><ComboBoxItem Content="卡片/位置"/>
-                            <ComboBoxItem Content="系统消息"/><ComboBoxItem Content="交易类（只读）"/>
+                            <ComboBoxItem Content="系统消息"/><ComboBoxItem Content="交易类"/>
                         </ComboBox>
                         <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,10,0,0">
                             <Button Content="+ 文字" Padding="10,5" Margin="0,0,6,0" IsEnabled="False" x:Name="AddTextButton" Click="OnAddText" ToolTip="在工作副本中新增一条文字消息（需先打开工作副本）"/>
@@ -99,17 +124,83 @@
                     <TextBox DockPanel.Dock="Top" x:Name="MessageSearchBox" Height="30" Margin="0,0,0,8"
                              ToolTip="搜索当前会话的正文、发送者、附件或消息 ID"
                              TextChanged="OnMessageSearchChanged"/>
-                    <ListBox x:Name="MessageList" SelectionChanged="OnMessageSelected"/>
+                    <ListBox x:Name="MessageList" SelectionChanged="OnMessageSelected"
+                             Background="#EDEDED" BorderThickness="0" Padding="6"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="Row" Background="Transparent" CornerRadius="6" Padding="4,2">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Row" Property="Background" Value="#D6E4FF"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding DayLabel}"
+                                               Visibility="{Binding ShowDay, Converter={StaticResource BoolToVis}}"
+                                               HorizontalAlignment="Center" Foreground="#8C959F"
+                                               FontSize="11" Margin="0,10,0,6"/>
+                                    <Border Style="{StaticResource ChatBubbleStyle}">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Sender}" FontSize="11" Foreground="#5A6472"
+                                                       Visibility="{Binding ShowSender, Converter={StaticResource BoolToVis}}"
+                                                       Margin="0,0,0,3"/>
+                                            <TextBlock Text="{Binding Body}" TextWrapping="Wrap" FontSize="14"
+                                                       Foreground="#141414"/>
+                                            <Image Source="{Binding LocalImagePath}" MaxWidth="220" MaxHeight="220"
+                                                   HorizontalAlignment="Left" Margin="0,6,0,0"
+                                                   Visibility="{Binding HasLocalImage, Converter={StaticResource BoolToVis}}"/>
+                                            <TextBlock Text="{Binding AttachmentNote}" FontSize="11" Foreground="#5A6472"
+                                                       Margin="0,4,0,0"
+                                                       Visibility="{Binding HasAttachmentNote, Converter={StaticResource BoolToVis}}"/>
+                                            <WrapPanel Margin="0,4,0,0">
+                                                <TextBlock Text="{Binding Time}" FontSize="11" Foreground="#5A6472" Margin="0,0,8,0"/>
+                                                <TextBlock Text="{Binding KindLabel}" FontSize="11" Foreground="#5A6472"
+                                                           Visibility="{Binding HasKindLabel, Converter={StaticResource BoolToVis}}"/>
+                                                <Border Background="#FFF8E1" CornerRadius="3" Padding="4,0" Margin="6,0,0,0"
+                                                        Visibility="{Binding IsTransaction, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="交易类" FontSize="10" Foreground="#7A5A00"/>
+                                                </Border>
+                                                <Border Background="#E8F0FE" CornerRadius="3" Padding="4,0" Margin="6,0,0,0"
+                                                        Visibility="{Binding IsNew, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="新增" FontSize="10" Foreground="#123C8C"/>
+                                                </Border>
+                                                <Border Background="#FDECEC" CornerRadius="3" Padding="4,0" Margin="6,0,0,0"
+                                                        Visibility="{Binding IsDirty, Converter={StaticResource BoolToVis}}">
+                                                    <TextBlock Text="已修改" FontSize="10" Foreground="#8C2F2F"/>
+                                                </Border>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </DockPanel>
             </Border>
             <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" Background="Transparent"/>            <Border Grid.Column="4" Background="White" CornerRadius="6" Padding="12" BorderBrush="#E2E4E8" BorderThickness="1">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top">
                         <TextBlock Text="消息编辑器" FontWeight="SemiBold" FontSize="16"/>
-                        <TextBlock Text="支持工作副本文字、媒体、日期和卡片编辑；交易/红包/收付款只读" Foreground="#6A737D" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,8"/>
+                        <TextBlock Text="支持文字、媒体、日期与各类卡片编辑；改完点【保存工作副本】" Foreground="#6A737D" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,8"/>
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
-                        <CheckBox x:Name="ReadOnlyFlag" Content="敏感/交易凭证类：强制只读" IsChecked="True" IsEnabled="False" Visibility="Collapsed" Margin="0,0,0,8"/>
+                        <CheckBox x:Name="ReadOnlyFlag" Content="交易类记录：可编辑，改动会写入审计" IsChecked="True" IsEnabled="False" Visibility="Collapsed" Margin="0,0,0,8"/>
                         <WrapPanel>
                             <Button Content="保存工作副本" Padding="12,7" Margin="0,0,8,0" IsEnabled="False" x:Name="EditButton" Click="OnSaveWorkspaceMessage"
                                     ToolTip="把右侧的正文、附件和时间改动写入工作副本 JSON（不保存就不会保留）"/>
@@ -148,7 +239,7 @@
                             <TextBlock Text="排序时间 / sequence"/><TextBox x:Name="DateSort" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="时区"/><TextBox x:Name="DateTimezone" IsReadOnly="True" Margin="0,2,0,8"/>
                             <WrapPanel><Button x:Name="ShiftTimelineButton" Content="批量顺延 60 秒" Padding="10,5" IsEnabled="False" Click="OnShiftTimeline"
-                                               ToolTip="把选中消息及其之后的所有消息整体推后 60 秒，用于腾出插入空间；只读交易类会被跳过"/><Button x:Name="ValidateTimelineButton" Content="校验时间线" Padding="10,5" Margin="6,0,0,0" IsEnabled="False" Click="OnValidateTimeline"/></WrapPanel>
+                                               ToolTip="把选中消息及其之后的所有消息整体推后 60 秒，用于腾出插入空间"/><Button x:Name="ValidateTimelineButton" Content="校验时间线" Padding="10,5" Margin="6,0,0,0" IsEnabled="False" Click="OnValidateTimeline"/></WrapPanel>
                         </StackPanel></ScrollViewer></TabItem>
 
                         <TabItem Header="位置/卡片"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
@@ -169,7 +260,7 @@
                         </StackPanel></ScrollViewer></TabItem>
                         <TabItem Header="交易/红包"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="8">
                             <Border Background="#FFF8E1" BorderBrush="#E5B300" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,10">
-                                <TextBlock Text="交易、红包、收付款和账单类记录只做读取与展示，不作为可伪造凭证写回。" TextWrapping="Wrap" Foreground="#7A5A00"/>
+                                <TextBlock Text="交易类记录可以编辑，用于恢复误删内容；请只填写真实发生过的信息，所有改动都会留在审计记录与差异中。" TextWrapping="Wrap" Foreground="#7A5A00"/>
                             </Border>
                             <TextBlock Text="类别"/><TextBox x:Name="TransactionType" IsReadOnly="True" Margin="0,2,0,8"/>
                             <TextBlock Text="金额 / 显示值"/><TextBox x:Name="TransactionAmount" IsReadOnly="True" Margin="0,2,0,8"/>

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -642,7 +643,7 @@ public partial class MainWindow : Window
             AddLog(
                 $"Message census: conversations={census.ConversationCount}; messages={census.MessageCount}; " +
                 $"groups={census.GroupConversationCount}; groupSenders={census.GroupSenderResolvedCount}; " +
-                $"unknown={census.UnknownMessageCount}; sensitive={census.SensitiveCount}; " +
+                $"unknown={census.UnknownMessageCount}; transactions={census.TransactionCount}; " +
                 $"failedConversations={censusFailures}.");
             if (census.UnknownRawTypes.Count > 0)
                 AddLog("Unclassified raw types: " + string.Join(',',
@@ -699,7 +700,7 @@ public partial class MainWindow : Window
                 $"\n抽样消息：{sampleMessages}（文字 {sampleTextMessages}）" +
                 $"\n普查消息：{census.MessageCount}" +
                 $"\n未知类型：{census.UnknownMessageCount}" +
-                $"\n交易/红包类只读：{census.SensitiveCount}" +
+                $"\n交易类记录：{census.TransactionCount}" +
                 $"\n\n报告：\n{reportPath}\n{censusPath}",
                 "阶段三验收通过", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -736,7 +737,7 @@ public partial class MainWindow : Window
                 $"会话：{report.ConversationCount}\n" +
                 $"当前已加载消息：{report.MessageCount}\n" +
                 $"未知类型：{report.UnknownMessageCount}\n" +
-                $"交易/红包/收付款只读：{report.SensitiveMessageCount}\n" +
+                $"交易类记录：{report.TransactionMessageCount}\n" +
                 $"警告：{report.WarningCount}\n\n" +
                 $"报告：\n{files.TextPath}\n{files.JsonPath}";
             AddLog($"Migration readiness: {report.Status}; warnings={report.WarningCount}; blocked={report.IsBlocked}.");
@@ -885,19 +886,17 @@ public partial class MainWindow : Window
         var query = MessageSearchBox?.Text.Trim() ?? "";
         if (_workspace is not null)
         {
-            MessageList.ItemsSource = _workspace.Messages
+            MessageList.ItemsSource = BuildWorkspaceBubbles(_workspace.Messages
                 .Where(x => MatchesFilter(x.Kind, index))
                 .Where(x => MatchesSearch(
-                    query, x.Content, x.Sender, x.Attachment, x.LocalId.ToString()))
-                .ToArray();
+                    query, x.Content, x.Sender, x.Attachment, x.LocalId.ToString())));
             return;
         }
         if (_currentMessages.Count > 0)
-            MessageList.ItemsSource = _currentMessages
+            MessageList.ItemsSource = BuildBubbles(_currentMessages
                 .Where(x => MatchesFilter(x.Kind, index))
                 .Where(x => MatchesSearch(
-                    query, x.Content, x.Sender, x.ImgPath, x.LocalId.ToString()))
-                .ToArray();
+                    query, x.Content, x.Sender, x.ImgPath, x.LocalId.ToString())));
     }
 
     private static bool MatchesSearch(string query, params string?[] values)
@@ -907,6 +906,55 @@ public partial class MainWindow : Window
             x.Contains(query, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Chat rows wrap the original message so selection and editing keep working.</summary>
+    private static object? Unwrap(object? item) => item is ChatBubble bubble ? bubble.Source : item;
+
+    private WorkspaceMessage? SelectedWorkspaceMessage =>
+        Unwrap(MessageList.SelectedItem) as WorkspaceMessage;
+
+    private static IReadOnlyList<ChatBubble> BuildBubbles(IEnumerable<WeChatMessage> messages)
+    {
+        var bubbles = new List<ChatBubble>();
+        string? previousDay = null;
+        foreach (var message in messages)
+        {
+            var day = DayLabelOf(message.CreateTime);
+            bubbles.Add(ChatBubble.FromMessage(message, day != previousDay, day));
+            previousDay = day;
+        }
+        return bubbles;
+    }
+
+    private static IReadOnlyList<ChatBubble> BuildWorkspaceBubbles(IEnumerable<WorkspaceMessage> messages)
+    {
+        var bubbles = new List<ChatBubble>();
+        string? previousDay = null;
+        foreach (var message in messages)
+        {
+            var day = DayLabelOf(message.CreateTime);
+            bubbles.Add(ChatBubble.FromWorkspace(message, day != previousDay, day));
+            previousDay = day;
+        }
+        return bubbles;
+    }
+
+    private static string DayLabelOf(long unixSeconds)
+    {
+        if (unixSeconds <= 0) return "时间未知";
+        try
+        {
+            var local = DateTimeOffset.FromUnixTimeSeconds(unixSeconds).LocalDateTime;
+            var today = DateTime.Today;
+            if (local.Date == today) return "今天";
+            if (local.Date == today.AddDays(-1)) return "昨天";
+            return local.ToString("yyyy-MM-dd dddd", CultureInfo.GetCultureInfo("zh-CN"));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "时间未知";
+        }
+    }
+
     private static bool MatchesFilter(MessageKind kind, int index) => index switch
     {
         1 => kind == MessageKind.Text,
@@ -914,20 +962,18 @@ public partial class MainWindow : Window
         3 => kind is MessageKind.Location or MessageKind.Link or MessageKind.MiniProgram
             or MessageKind.ContactCard or MessageKind.Quote,
         4 => kind is MessageKind.System or MessageKind.Call,
-        5 => MessageKindPolicy.IsSensitive(kind),
+        5 => MessageKindPolicy.IsTransaction(kind),
         _ => true
     };
 
     private async void OnMessageSelected(object sender, SelectionChangedEventArgs e)
     {
-        switch (MessageList.SelectedItem)
+        switch (Unwrap(MessageList.SelectedItem))
         {
             case WeChatMessage message:
                 FillEditor(message);
-                SetEditorMode(false, message.Sensitive);
-                UpdateGuideHint(message.Sensitive
-                    ? "这条记录属于交易/红包/收付款类，保持只读。"
-                    : "原始快照只读。点【工作副本】打开可编辑副本后，才能新增或修改这个会话的消息。");
+                SetEditorMode(false, message.IsTransaction);
+                UpdateGuideHint("原始快照只读。点【工作副本】打开可编辑副本后，就能新增或修改这个会话的消息。");
                 if (_device is not null && message.Kind is MessageKind.Image or MessageKind.Video
                     or MessageKind.Voice or MessageKind.Emoji or MessageKind.File)
                 {
@@ -942,14 +988,14 @@ public partial class MainWindow : Window
                 break;
             case WorkspaceMessage edited:
                 FillEditor(edited);
-                SetEditorMode(edited.CanEdit, edited.Sensitive);
-                UpdateGuideHint(edited.Sensitive
-                    ? "这条记录属于交易/红包/收付款类，保持只读。"
+                SetEditorMode(edited.CanEdit, edited.IsTransaction);
+                UpdateGuideHint(edited.IsTransaction
+                    ? "这条是交易类记录，可以编辑；请只用来恢复真实数据，改完点【保存工作副本】。"
                     : "可编辑：在右侧改内容/日期/媒体/卡片，改完点【保存工作副本】写盘。");
                 break;
             case MessagePreview preview:
                 FillEditor(preview);
-                SetEditorMode(false, preview.Sensitive);
+                SetEditorMode(false, preview.IsTransaction);
                 UpdateGuideHint("当前显示的是内置示例数据；连接设备并解析快照后会显示真实记录。");
                 break;
         }
@@ -991,8 +1037,9 @@ public partial class MainWindow : Window
         MessageFilter.SelectedIndex = 0;
         ApplyMessageFilter();
         MessageList.Items.Refresh();
-        MessageList.SelectedItem = message;
-        MessageList.ScrollIntoView(message);
+        if (MessageList.ItemsSource is IEnumerable<ChatBubble> bubbles)
+            MessageList.SelectedItem = bubbles.FirstOrDefault(x => ReferenceEquals(x.Source, message));
+        if (MessageList.SelectedItem is not null) MessageList.ScrollIntoView(MessageList.SelectedItem);
         AddLog($"Workspace message added: {kind}, id={message.LocalId}.");
         UpdateGuideHint("已新增一条消息：在右侧“内容”页把模板文字改成你要的内容，再点【保存工作副本】。");
     }
@@ -1037,7 +1084,7 @@ public partial class MainWindow : Window
 
     private async void OnReplaceMedia(object sender, RoutedEventArgs e)
     {
-        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg ||
+        if (_workspace is null || SelectedWorkspaceMessage is not { } msg ||
             !msg.CanEdit || !MessageKindPolicy.HasExternalMedia(msg.Kind))
             return;
         var dialog = new OpenFileDialog { Filter = "所有文件|*.*", Multiselect = false };
@@ -1102,7 +1149,7 @@ public partial class MainWindow : Window
 
     private async void OnSaveWorkspaceMessage(object sender, RoutedEventArgs e)
     {
-        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg || !msg.CanEdit)
+        if (_workspace is null || SelectedWorkspaceMessage is not { } msg || !msg.CanEdit)
             return;
         try
         {
@@ -1129,7 +1176,7 @@ public partial class MainWindow : Window
 
     private void OnUndoWorkspaceMessage(object sender, RoutedEventArgs e)
     {
-        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage msg) return;
+        if (_workspace is null || SelectedWorkspaceMessage is not { } msg) return;
         var wasNew = msg.IsNew;
         _workspaceService.Revert(_workspace, msg.LocalId);
         if (wasNew)
@@ -1148,7 +1195,7 @@ public partial class MainWindow : Window
 
     private void OnShiftTimeline(object sender, RoutedEventArgs e)
     {
-        if (_workspace is null || MessageList.SelectedItem is not WorkspaceMessage anchor)
+        if (_workspace is null || SelectedWorkspaceMessage is not { } anchor)
         {
             MessageBox.Show(
                 "请先在列表中选中一条消息。批量顺延会作用于这条消息以及它之后的所有消息。",
@@ -1259,21 +1306,21 @@ public partial class MainWindow : Window
         TransactionMemo.Text = meta.TransactionMemo;
     }
 
-    private void SetEditorMode(bool editable, bool sensitive)
+    private void SetEditorMode(bool editable, bool transactionClass)
     {
-        ReadOnlyFlag.Visibility = sensitive ? Visibility.Visible : Visibility.Collapsed;
-        var allow = editable && !sensitive;
+        ReadOnlyFlag.Visibility = transactionClass ? Visibility.Visible : Visibility.Collapsed;
+        var allow = editable;
         PropertyContent.IsReadOnly = !allow;
         PropertyTime.IsReadOnly = !allow;
         PropertyAttachment.IsReadOnly = !allow;
         EditButton.IsEnabled = allow;
         UndoButton.IsEnabled = allow;
         ReplaceMediaButton.IsEnabled = allow &&
-            MessageList.SelectedItem is WorkspaceMessage workspaceMessage &&
+            SelectedWorkspaceMessage is { } workspaceMessage &&
             MessageKindPolicy.HasExternalMedia(workspaceMessage.Kind);
         PreviewMediaButton.IsEnabled = File.Exists(MediaOriginalPath.Text);
         ValidateTimelineButton.IsEnabled = _workspace is not null || _currentMessages.Count > 0;
-        ShiftTimelineButton.IsEnabled = allow && MessageList.SelectedItem is WorkspaceMessage;
+        ShiftTimelineButton.IsEnabled = allow && SelectedWorkspaceMessage is not null;
     }
 
     private void AddLog(string text)
@@ -1344,7 +1391,7 @@ public partial class MainWindow : Window
         string Content,
         string Time,
         string? Attachment,
-        bool Sensitive)
+        bool IsTransaction)
     {
         public override string ToString() => $"[{Time}] {Sender} · {Type} · {Content}";
     }

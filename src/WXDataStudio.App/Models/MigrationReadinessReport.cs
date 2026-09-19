@@ -17,7 +17,8 @@ public sealed class MigrationReadinessReport
     public DateTimeOffset GeneratedAt { get; init; } = DateTimeOffset.Now;
     public int ConversationCount { get; init; }
     public int MessageCount { get; init; }
-    public int SensitiveMessageCount { get; init; }
+    /// <summary>Transfer / red-packet / payment records seen in the current data.</summary>
+    public int TransactionMessageCount { get; init; }
     public int UnknownMessageCount { get; init; }
     public IReadOnlyList<MigrationCheckItem> Items { get; init; } = Array.Empty<MigrationCheckItem>();
 

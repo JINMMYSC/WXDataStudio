@@ -11,7 +11,8 @@ public sealed class WorkspaceMessage
     public int RawStatus { get; init; }
     public long Sequence { get; init; }
     public MessageKind Kind { get; init; }
-    public bool Sensitive { get; init; }
+    /// <summary>Transaction-class record: labelled in the UI, still editable.</summary>
+    public bool IsTransaction { get; init; }
     public bool IsNew { get; init; }
     public string OriginalContent { get; init; } = "";
     public long OriginalCreateTime { get; init; }
@@ -46,7 +47,7 @@ public sealed class WorkspaceMessage
         RawStatus = source.RawStatus,
         Sequence = source.Sequence,
         Kind = source.Kind,
-        Sensitive = source.Sensitive,
+        IsTransaction = source.IsTransaction,
         OriginalContent = source.Content,
         OriginalCreateTime = source.CreateTime,
         OriginalAttachment = source.ImgPath,
@@ -62,7 +63,7 @@ public sealed class WorkspaceMessage
         ConversationId = conversationId,
         IsOutgoing = true,
         Kind = kind,
-        Sensitive = MessageKindPolicy.IsSensitive(kind),
+        IsTransaction = MessageKindPolicy.IsTransaction(kind),
         IsNew = true,
         OriginalContent = "",
         OriginalCreateTime = 0,

@@ -36,10 +36,11 @@ public sealed class MigrationReadinessService
             items.Add(new("unknown-types", MigrationCheckSeverity.Warning,
                 $"{unknown} message(s) use an unknown type and need review before migration."));
 
-        var sensitive = messages.Count(x => x.Sensitive);
-        if (sensitive > 0)
-            items.Add(new("sensitive-readonly", MigrationCheckSeverity.Info,
-                $"{sensitive} payment/red-packet/transfer record(s) are locked read-only."));
+        var transactions = messages.Count(x => x.IsTransaction);
+        if (transactions > 0)
+            items.Add(new("transaction-records", MigrationCheckSeverity.Info,
+                $"{transactions} payment/red-packet/transfer record(s) are labelled " +
+                "transaction-class; keep them truthful when recovering deleted history."));
 
         if (!File.Exists(Path.Combine(snapshotDirectory, "EnMicroMsg.db-wal")))
             items.Add(new("wal-missing", MigrationCheckSeverity.Warning,
@@ -52,7 +53,7 @@ public sealed class MigrationReadinessService
         {
             ConversationCount = conversations.Count,
             MessageCount = messages.Count,
-            SensitiveMessageCount = sensitive,
+            TransactionMessageCount = transactions,
             UnknownMessageCount = unknown,
             Items = items
         };

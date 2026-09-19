@@ -165,7 +165,7 @@ public sealed class ChatExportService
                 sender = x.Message.Sender,
                 kind = x.Message.Kind.ToString(),
                 rawType = x.Message.RawType,
-                readOnly = x.Message.Sensitive,
+                transactionClass = x.Message.IsTransaction,
                 text = x.Description,
                 content = x.Message.Content,
                 attachment = x.CopiedAssetName ?? x.Message.ImgPath,
@@ -229,7 +229,7 @@ public sealed class ChatExportService
         if (!string.IsNullOrWhiteSpace(snapshotDirectory))
             html.AppendLine($"<br>来源快照：{E(snapshotDirectory)}");
         html.AppendLine("</div>");
-        html.AppendLine("<div class=\"notice\">本文件包含个人聊天内容，只保存在本机。交易、红包、收付款类记录为只读展示，不代表可写回手机。</div>");
+        html.AppendLine("<div class=\"notice\">本文件包含个人聊天内容，只保存在本机。交易类记录已标注，导出只是本机副本。</div>");
         html.AppendLine("</header>");
 
         string? currentDay = null;
@@ -246,7 +246,7 @@ public sealed class ChatExportService
             html.AppendLine($"<div class=\"{classes}\">");
             html.AppendLine($"<div class=\"meta\">{E(record.Message.DisplayTime)} · " +
                             $"{(record.Message.IsOutgoing ? "我发送" : "对方发送")} · {E(record.Message.Kind.ToString())}" +
-                            (record.Message.Sensitive ? "<span class=\"ro\">只读</span>" : "") + "</div>");
+                            (record.Message.IsTransaction ? "<span class=\"ro\">交易类</span>" : "") + "</div>");
             html.AppendLine($"<div class=\"body\">{E(record.Description)}</div>");
 
             if (record.CopiedAssetName is not null)
@@ -298,11 +298,11 @@ public sealed class ChatExportService
             case MessageKind.Quote:
                 return Join("[引用]", metadata.QuoteSender, metadata.QuoteContent, metadata.Title);
             case MessageKind.Transfer:
-                return Join("[转账 · 只读]", metadata.TransactionAmount, metadata.TransactionStatus, metadata.TransactionMemo);
+                return Join("[转账]", metadata.TransactionAmount, metadata.TransactionStatus, metadata.TransactionMemo);
             case MessageKind.RedPacket:
-                return Join("[红包 · 只读]", metadata.TransactionAmount, metadata.TransactionMemo);
+                return Join("[红包]", metadata.TransactionAmount, metadata.TransactionMemo);
             case MessageKind.Payment:
-                return Join("[收付款 · 只读]", metadata.TransactionAmount, metadata.TransactionStatus, metadata.TransactionMemo);
+                return Join("[收付款]", metadata.TransactionAmount, metadata.TransactionStatus, metadata.TransactionMemo);
             case MessageKind.Call:
                 return Join("[通话]", metadata.Title, Clean(content));
             case MessageKind.System:

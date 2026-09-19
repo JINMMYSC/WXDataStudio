@@ -25,7 +25,7 @@ public sealed class MigrationReportExporter
             .AppendLine($"Conversations: {report.ConversationCount}")
             .AppendLine($"Messages: {report.MessageCount}")
             .AppendLine($"Unknown types: {report.UnknownMessageCount}")
-            .AppendLine($"Sensitive read-only: {report.SensitiveMessageCount}")
+            .AppendLine($"Transaction-class records: {report.TransactionMessageCount}")
             .AppendLine()
             .AppendLine("Checks:");
 

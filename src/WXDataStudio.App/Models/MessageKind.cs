@@ -23,11 +23,16 @@ public enum MessageKind
 
 public static class MessageKindPolicy
 {
-    public static bool IsSensitive(MessageKind kind) => kind is
+    /// <summary>
+    /// Transaction-class records. They are labelled in the UI because editing
+    /// them changes financial-looking history, but they are editable: this tool
+    /// exists to repair accidentally deleted personal chat records.
+    /// </summary>
+    public static bool IsTransaction(MessageKind kind) => kind is
         MessageKind.Transfer or MessageKind.RedPacket or MessageKind.Payment;
 
-    public static bool IsEditable(MessageKind kind) => !IsSensitive(kind) && kind is not
-        MessageKind.Unknown and not MessageKind.System;
+    /// <summary>Every message class can be created or edited in a workspace.</summary>
+    public static bool IsEditable(MessageKind kind) => true;
 
     public static bool HasExternalMedia(MessageKind kind) => kind is
         MessageKind.Image or MessageKind.Voice or MessageKind.Video or
