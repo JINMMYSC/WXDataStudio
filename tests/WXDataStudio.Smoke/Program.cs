@@ -571,6 +571,68 @@ Assert(!Directory.Exists(SnapshotReadSession.WorkingDirectoryFor(walSnapshotDir)
 Assert((await new SnapshotIntegrityService().CheckAsync(walSnapshotDir)).Count == 0,
     "snapshot integrity failed after read session disposal");
 
+// Conversation export: text is escaped, local media is copied, device-only and
+// missing attachments are counted, read-only records stay labelled.
+var exportRoot = Path.Combine(root, "exports");
+var exportMedia = Path.Combine(root, "export-image.png");
+await File.WriteAllBytesAsync(exportMedia, new byte[] { 9, 8, 7, 6 });
+var exportMessages = new[]
+{
+    new WeChatMessage
+    {
+        LocalId = 1, ConversationId = "alice", Kind = MessageKind.Text,
+        CreateTime = 1_726_600_000, Content = "<script>alert('x')</script>"
+    },
+    new WeChatMessage
+    {
+        LocalId = 2, ConversationId = "alice", IsOutgoing = true, Kind = MessageKind.Image,
+        CreateTime = 1_726_600_060, ImgPath = exportMedia
+    },
+    new WeChatMessage
+    {
+        LocalId = 3, ConversationId = "alice", Kind = MessageKind.Image,
+        CreateTime = 1_726_600_120, ImgPath = "/sdcard/Android/data/com.tencent.mm/x.jpg"
+    },
+    new WeChatMessage
+    {
+        LocalId = 4, ConversationId = "alice", Kind = MessageKind.RedPacket,
+        CreateTime = 1_726_600_180,
+        Content = "<msg><appmsg><type>2001</type><title>packet</title></appmsg></msg>"
+    },
+    new WeChatMessage
+    {
+        LocalId = 5, ConversationId = "alice", Kind = MessageKind.File,
+        CreateTime = 1_726_600_240,
+        Content = "<msg><appmsg><type>6</type><title>report.pdf</title><fileext>pdf</fileext>" +
+                  "<totallen>1024</totallen></appmsg></msg>"
+    }
+};
+var export = await new ChatExportService().ExportAsync(exportRoot, "Alice", exportMessages, root);
+Assert(File.Exists(export.HtmlPath) && File.Exists(export.JsonPath), "export files missing");
+Assert(export.MessageCount == 5, "export message count mismatch");
+Assert(export.LocalAssetCount == 1, "export local asset count mismatch");
+Assert(export.DeviceOnlyAttachmentCount == 1, "export device-only attachment count mismatch");
+Assert(export.MissingAttachmentCount == 1, "export missing attachment count mismatch");
+var exportHtml = await File.ReadAllTextAsync(export.HtmlPath);
+Assert(exportHtml.Contains("&lt;script&gt;"), "export html must escape message content");
+Assert(!exportHtml.Contains("<script>alert", StringComparison.Ordinal), "export html must not embed raw script");
+Assert(exportHtml.Contains("assets/"), "export html must reference the copied asset");
+Assert(exportHtml.Contains("report.pdf"), "export html must describe file attachments");
+Assert(!exportHtml.Contains("<appmsg>", StringComparison.Ordinal), "export html must not dump raw xml");
+Assert(exportHtml.Contains("只读"), "export html must label read-only records");
+Assert(Directory.GetFiles(Path.Combine(export.DirectoryPath, "assets")).Length == 1,
+    "export asset directory mismatch");
+using (var exportJson = System.Text.Json.JsonDocument.Parse(
+    await File.ReadAllTextAsync(export.JsonPath)))
+{
+    var rootElement = exportJson.RootElement;
+    Assert(rootElement.GetProperty("messageCount").GetInt32() == 5, "export json message count mismatch");
+    Assert(rootElement.GetProperty("attachments").GetProperty("localFiles").GetInt32() == 1,
+        "export json attachment summary mismatch");
+    Assert(rootElement.GetProperty("messages")[3].GetProperty("readOnly").GetBoolean(),
+        "export json must mark read-only records");
+}
+
 var workspacePath = await workspaceService.SaveAsync(workspace, root);
 var loaded = await workspaceService.LoadAsync(workspacePath);
 Assert(loaded.Messages.Single(x => x.LocalId == 1).Content == "edited hello", "workspace persistence mismatch");

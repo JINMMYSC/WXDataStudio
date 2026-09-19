@@ -28,6 +28,7 @@ Stage 3 is implemented as a safe workspace/read-only feature set. Real phone dat
 - Timeline validation.
 - Migration-readiness checks with JSON and text report export.
 - Privacy-safe message census (`MessageCensusService`): per-class counts with direction split, group-sender resolution, sensitive-class counts, unclassified raw types, and an appmsg sub-type histogram. It records counts and numeric type values only, never content, chat names or device identifiers.
+- Conversation export (`ChatExportService`): one conversation becomes a readable HTML transcript plus a full JSON payload, with attachment accounting (local copy, device-only reference, missing) and HTML escaping of all message text. Exports are written only to the directory the user picks.
 - A one-click Stage 3 read-only acceptance action creates a fresh resolver-enabled snapshot, verifies integrity/database opening/schema mapping, requires real conversations plus sample text messages, censuses every conversation, and writes a privacy-safe acceptance report plus `.census.json`.
 - Snapshot read session: every SQLite/SQLCipher read runs against a verified working copy under `<snapshot>/derived/read-session`, and the acceptance flow re-checks the manifest after parsing.
 - Verified rollback ZIP generation from an intact snapshot.

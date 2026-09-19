@@ -23,6 +23,7 @@
                     <Button Content="完整性检查" Padding="14,7" Margin="0,0,8,0" Click="OnRunIntegrityCheck" ToolTip="核对快照文件的大小与 SHA-256"/>
                     <Button Content="回滚包" Padding="14,7" Margin="0,0,8,0" Click="OnCreateRollbackPackage" ToolTip="把快照打包成 ZIP 回滚备份"/>
                     <Button Content="迁移检查" Padding="14,7" Margin="0,0,8,0" Click="OnMigrationCheck" ToolTip="生成迁移准备报告（JSON + 文本）"/>
+                    <Button Content="导出会话" Padding="14,7" Margin="0,0,8,0" Click="OnExportConversation" ToolTip="第 9 步：把当前会话导出为 HTML 记录与 JSON 数据，只保存在本机"/>
                     <Button Content="阶段三验收" Padding="14,7" Click="OnStage3Acceptance" ToolTip="执行一次只读真机自检并写出验收报告"/>
                 </WrapPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">

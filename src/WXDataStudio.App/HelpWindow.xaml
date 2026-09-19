@@ -119,6 +119,8 @@
                         <TextBlock Text="第 9 步 · 校验、报告与回滚包" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"
                                    Text="【完整性检查】核对快照文件的大小与 SHA-256；【迁移检查】生成迁移准备报告（JSON + 文本，保存在“文档\WXDataStudio\reports”）；【回滚包】把快照打包成 ZIP 备份；【阶段三验收】执行一次只读的真机自检并写出报告。"/>
+                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
+                                   Text="【导出会话】把当前会话导出一份 HTML 记录和一份 JSON 数据：HTML 可直接双击打开浏览，图片等本地附件会复制到导出目录的 assets 子目录，JSON 保留完整字段用于后续处理。导出内容包含个人聊天内容，只保存在本机，不要上传。"/>
                     </StackPanel>
                 </Border>
 
@@ -135,6 +137,8 @@
                         <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="不会。数据库读取走的是校验过的副本，快照在解析前后哈希一致；原始快照与手机数据库始终保持只读。"/>
                         <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="能删除微信里的记录吗？"/>
                         <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="不能。本工具不做删除，也不向手机数据库写回任何内容。"/>
+                        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="导出的文件会不会被别人看到？"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="#5A6472" Text="导出目录和文件只在你本机上生成，软件不上传任何内容。请自行注意不要把这些文件提交到公开仓库或聊天群。"/>
                     </StackPanel>
                 </Border>
             </StackPanel>

@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly RollbackPackageService _rollbackPackages = new();
     private readonly LegacySc1PageDecryptService _sc1Decrypt = new();
     private readonly MessageCensusService _messageCensus = new();
+    private readonly ChatExportService _chatExport = new();
     private readonly MediaLocatorService _mediaLocator;
     private readonly LegacyWeChatKeyCandidateService _legacyKeyCandidates;
     private readonly DatabaseCredentialResolver _credentialResolver;
@@ -746,6 +747,77 @@ public partial class MainWindow : Window
         {
             AddLog($"Migration readiness failed: {ex.Message}");
             MessageBox.Show(ex.Message, "迁移检查失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void OnExportConversation(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string conversationName;
+            IReadOnlyList<WeChatMessage> messages;
+            if (_workspace is not null)
+            {
+                conversationName = _workspace.ConversationName;
+                messages = _workspace.Messages.Select(x => new WeChatMessage
+                {
+                    LocalId = x.LocalId,
+                    ServerId = x.ServerId,
+                    ConversationId = x.ConversationId,
+                    Sender = x.Sender,
+                    IsOutgoing = x.IsOutgoing,
+                    RawType = x.RawType,
+                    RawStatus = x.RawStatus,
+                    Sequence = x.Sequence,
+                    Kind = x.Kind,
+                    Content = x.Content,
+                    ImgPath = x.Attachment,
+                    CreateTime = x.CreateTime
+                }).ToArray();
+            }
+            else if (_currentConversation is not null && _currentMessages.Count > 0)
+            {
+                conversationName = _currentConversation.EffectiveName;
+                messages = _currentMessages;
+            }
+            else
+            {
+                MessageBox.Show("请先在左侧选择一个会话并等消息加载完成，再导出。", "导出会话",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var defaultRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "WXDataStudio", "exports");
+            Directory.CreateDirectory(defaultRoot);
+            var dialog = new OpenFolderDialog
+            {
+                Title = "选择导出目录（导出内容含个人聊天记录，只保存在本机）",
+                InitialDirectory = defaultRoot,
+                Multiselect = false
+            };
+            if (dialog.ShowDialog(this) != true) return;
+
+            var summary = await _chatExport.ExportAsync(
+                dialog.FolderName, conversationName, messages, _latestSnapshotDirectory);
+            AddLog($"Conversation exported: messages={summary.MessageCount}; " +
+                   $"localAssets={summary.LocalAssetCount}; deviceOnly={summary.DeviceOnlyAttachmentCount}; " +
+                   $"missing={summary.MissingAttachmentCount}.");
+            UpdateGuideHint("已导出会话：HTML 可直接双击查看，JSON 是完整数据。导出文件含个人聊天内容，请勿上传。");
+            MessageBox.Show(
+                $"导出完成。\n\n会话：{conversationName}\n消息：{summary.MessageCount}\n" +
+                $"本地附件复制：{summary.LocalAssetCount}\n" +
+                $"仅手机端附件：{summary.DeviceOnlyAttachmentCount}\n" +
+                $"缺失附件：{summary.MissingAttachmentCount}\n\n" +
+                $"HTML：\n{summary.HtmlPath}\n\nJSON：\n{summary.JsonPath}\n\n" +
+                "导出文件包含个人聊天内容，只保存在本机，请勿上传到公开仓库。",
+                "导出完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Conversation export failed: {ex.Message}");
+            MessageBox.Show(ex.Message, "导出失败", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
