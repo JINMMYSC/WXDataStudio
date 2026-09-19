@@ -258,6 +258,20 @@ public partial class MainWindow : Window
         var current = TransactionMessageTemplate.Read(message.Kind, message.Content);
         var input = MoneyMessageDialog.Show(this, message.Kind, current.Amount, current.Note, current.Status);
         if (input is null) return;
+
+        // Changing the amount only changes the chat text: the payment record
+        // behind the transfer detail page and the wallet is not touched.
+        if (!string.IsNullOrWhiteSpace(current.Amount) &&
+            !string.Equals(current.Amount, input.Amount, StringComparison.Ordinal))
+        {
+            var confirm = MessageBox.Show(
+                $"你正在把这条记录的金额从 {current.Amount} 改成 {input.Amount}。\n\n" +
+                "只会改聊天里显示的文字。点进转账详情、以及钱包里的记录，仍然显示原来的金额，" +
+                "因为那是微信的支付记录，本地改不了。\n\n确定要继续吗？",
+                "只改聊天文字", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (confirm != MessageBoxResult.OK) return;
+        }
+
         // Existing records are edited in place so transaction ids and usernames
         // survive; only a brand-new record is built from scratch.
         var content = TransactionMessageTemplate.Update(
