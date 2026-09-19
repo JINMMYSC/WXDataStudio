@@ -57,7 +57,8 @@ public partial class MainWindow : Window
         LogList.ItemsSource = _logs;
         ConversationList.ItemsSource = new[] { "Device & adapter", "Demo chat", "Demo group" };
         _demoMessages = BuildDemoMessages();
-        AddLog("WXDataStudio v0.3 started.");
+        BuildStampText.Text = BuildStamp();
+        AddLog($"WXDataStudio started ({BuildStamp()}).");
         AddLog("Locked baseline: MIX 2S / Android 9 / MIUI 10.3.5 / WeChat 8.0.76 (3141).");
         AddLog("Read-only snapshot parser and local workspace editor are enabled.");
         AddLog("Phone write-back remains disabled until validation and rollback gates pass.");
@@ -1155,6 +1156,8 @@ public partial class MainWindow : Window
             var result = await new PhoneRestoreService(_adb).RestoreAsync(request, AddLog);
             AddLog($"Write-back finished: success={result.Success}; updated={result.UpdatedRows}; " +
                    $"inserted={result.InsertedRows}; verified={result.VerifiedRows}.");
+            WriteLogFile("write-back summary: " + string.Join(" | ",
+                result.Steps.Select(x => $"{(x.Success ? "OK" : "FAIL")} {x.Name}: {x.Detail}")));
             UpdateGuideHint(result.Success
                 ? "已经同步到手机微信了，打开这个聊天就能看到。"
                 : "写回没完全成功；手机侧备份和电脑上的回滚包都在，可以重试或还原。");
@@ -1806,12 +1809,45 @@ public partial class MainWindow : Window
 
     private void AddLog(string text)
     {
+        WriteLogFile(text);
         Dispatcher.Invoke(() =>
         {
             _logs.Add($"[{DateTime.Now:HH:mm:ss}] {text}");
             if (_logs.Count > 300) _logs.RemoveAt(0);
             if (_logs.Count > 0) LogList.ScrollIntoView(_logs[^1]);
         });
+    }
+
+    private static readonly string LogDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        "WXDataStudio", "logs");
+
+    /// <summary>
+    /// Every action is also written to a log file, so a failed write-back can be
+    /// diagnosed afterwards without guessing.
+    /// </summary>
+    private static void WriteLogFile(string text)
+    {
+        try
+        {
+            Directory.CreateDirectory(LogDirectory);
+            var path = Path.Combine(LogDirectory, $"app-{DateTime.Now:yyyyMMdd}.log");
+            File.AppendAllText(path, $"[{DateTime.Now:HH:mm:ss}] {text}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Logging must never break the UI.
+        }
+    }
+
+    private static string BuildStamp()
+    {
+        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?";
+        var exe = Environment.ProcessPath;
+        var built = exe is not null && File.Exists(exe)
+            ? File.GetLastWriteTime(exe).ToString("yyyy-MM-dd HH:mm")
+            : "unknown";
+        return $"v{version} 构建于 {built}";
     }
 
     private static string? FindLatestSnapshotDirectory()

@@ -52,6 +52,8 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="WXDataStudio" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BuildStampText" FontSize="11" Foreground="#98A0A8"
+                               VerticalAlignment="Bottom" Margin="8,0,0,2"/>
                     <Border Background="#F0F2F5" CornerRadius="12" Padding="10,4" Margin="14,0,0,0">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="DeviceIndicator" Width="8" Height="8" Fill="#B0B7BF"
