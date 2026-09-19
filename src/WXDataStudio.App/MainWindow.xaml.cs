@@ -1218,13 +1218,17 @@ public partial class MainWindow : Window
                 : "写回没完全成功；手机侧备份和电脑上的回滚包都在，可以重试或还原。");
             SetStatus(result.Success
                 ? $"写回完成：改了 {result.UpdatedRows} 条、新增 {result.InsertedRows} 条，手机回读校验 {result.VerifiedRows}/{_workspace.Messages.Count}。"
-                : "写回未完全成功，详见弹窗里的步骤说明。");
+                : $"写回未完全成功：手机回读只对上了 {result.VerifiedRows}/{_workspace.Messages.Count} 条。再点一次【写回手机】即可重试。");
             if (result.Success && result.VerifiedPlaintextPath is not null && _currentConversation is not null)
                 await AdoptPhoneStateAsync(result.VerifiedPlaintextPath, _currentConversation);
             MessageBox.Show(
                 (result.Success ? "写回完成并通过回读校验。\n\n" : "写回未完全成功。\n\n") +
                 $"更新行：{result.UpdatedRows}\n新增行：{result.InsertedRows}\n" +
                 $"回读校验：{result.VerifiedRows}/{_workspace.Messages.Count}\n\n" +
+                (result.Success
+                    ? ""
+                    : "有记录没能留在手机上（多半是微信正在同步这段聊天）。" +
+                      "改动仍保存在电脑上，直接再点一次【写回手机】重试即可。\n\n") +
                 $"工作目录：\n{result.WorkingDirectory}\n\n" +
                 (result.RollbackPackagePath is null ? "" : $"本地回滚包：\n{result.RollbackPackagePath}\n\n") +
                 string.Join(Environment.NewLine, result.Steps.Select(x => $"{(x.Success ? "OK" : "!!")} {x.Name}: {x.Detail}")),

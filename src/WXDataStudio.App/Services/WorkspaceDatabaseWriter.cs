@@ -62,6 +62,14 @@ public sealed class WorkspaceDatabaseWriter
         var sequenceColumn = Pick(columns, SequenceColumns);
         var serverIdColumn = Pick(columns, ServerIdColumns);
 
+        var conversationTable = await ResolveConversationTableAsync(connection, cancellationToken);
+        var conversationContentColumn = conversationTable is null
+            ? null
+            : Pick(await GetColumnsAsync(connection, conversationTable, cancellationToken), ContentColumns);
+        var conversationTimeColumn = conversationTable is null
+            ? null
+            : Pick(await GetColumnsAsync(connection, conversationTable, cancellationToken), TimeColumns);
+
         var updated = 0;
         var inserted = 0;
         var deleted = 0;
@@ -153,7 +161,9 @@ public sealed class WorkspaceDatabaseWriter
             Add(sequenceColumn, "$seq", nextSequence++);
             Add(contentColumn, "$content", message.Content);
             Add(imageColumn, "$image", message.Attachment);
-            Add(serverIdColumn, "$server", 0);
+            // A negative server id means "not acknowledged by the server yet",
+            // which WeChat keeps, while a zero id can be pruned by message sync.
+            Add(serverIdColumn, "$server", -1);
 
             // Some WeChat schema versions carry NOT NULL columns without defaults.
             foreach (var column in required)
@@ -167,6 +177,28 @@ public sealed class WorkspaceDatabaseWriter
                 $"INSERT INTO {Q(table)} ({string.Join(',', names.Select(Q))}) " +
                 $"VALUES ({string.Join(',', values)})";
             inserted += await command.ExecuteNonQueryAsync(cancellationToken);
+
+            // Keep the chat list preview in step with the recovered message.
+            if (conversationTable is not null && conversationContentColumn is not null &&
+                conversationTimeColumn is not null && talkerColumn is not null)
+            {
+                try
+                {
+                    await using var summary = connection.CreateCommand();
+                    summary.CommandText =
+                        $"UPDATE {Q(conversationTable)} SET {Q(conversationContentColumn)}=$content, " +
+                        $"{Q(conversationTimeColumn)}=$time WHERE {Q(talkerColumn)}=$talker";
+                    summary.Parameters.AddWithValue("$content", message.Content);
+                    summary.Parameters.AddWithValue("$time", message.CreateTime);
+                    summary.Parameters.AddWithValue("$talker", workspace.ConversationId);
+                    await summary.ExecuteNonQueryAsync(cancellationToken);
+                }
+                catch (SqliteException ex)
+                {
+                    // An unexpected chat-list schema must not abort the insert.
+                    warnings.Add("Chat list preview was not updated: " + ex.Message);
+                }
+            }
         }
 
         return new WorkspaceWriteResult(databasePath, updated, inserted, deleted, warnings);
@@ -255,6 +287,17 @@ public sealed class WorkspaceDatabaseWriter
         }
 
         return null;
+    }
+
+    private static async Task<string?> ResolveConversationTableAsync(
+        SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT name FROM sqlite_master WHERE type='table' " +
+            "AND lower(name) IN ('rconversation','conversation')";
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is null or DBNull ? null : Convert.ToString(value);
     }
 
     private static async Task<List<ColumnInfo>> GetColumnsAsync(
