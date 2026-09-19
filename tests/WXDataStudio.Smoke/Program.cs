@@ -111,6 +111,31 @@ Assert(!MessageKindPolicy.IsEditable(MessageKind.Transfer), "transfer must stay 
 Assert(!MessageKindPolicy.IsEditable(MessageKind.RedPacket), "red packet must stay read-only");
 Assert(MessageKindPolicy.IsEditable(MessageKind.Text), "text should be editable in workspace");
 
+var mediaDevice = new DeviceInfo
+{
+    AccountDirectory = "private-account",
+    ExternalAccountDirectory = "external-account"
+};
+var imageSearchLocations = MediaLocatorService.GetSearchLocations(mediaDevice, MessageKind.Image);
+Assert(imageSearchLocations.Any(x => x.RequiresRoot &&
+    x.Directory == "/data/user/0/com.tencent.mm/MicroMsg/private-account/image2"),
+    "image search must include the private WeChat account directory");
+Assert(imageSearchLocations.Any(x => !x.RequiresRoot &&
+    x.Directory == "/sdcard/Android/data/com.tencent.mm/MicroMsg/external-account/image2"),
+    "image search must retain the external WeChat account directory fallback");
+var unsafeMediaDevice = mediaDevice with { AccountDirectory = "bad';id" };
+Assert(!MediaLocatorService.GetSearchLocations(unsafeMediaDevice, MessageKind.Image)
+        .Any(x => x.RequiresRoot),
+    "unsafe device-provided account directories must never enter root shell commands");
+
+var sourceFingerprint = new DeviceFileFingerprint(8192, "aabbcc");
+Assert(sourceFingerprint.Matches(new DeviceFileFingerprint(8192, "AABBCC")),
+    "device fingerprints should compare SHA-256 case-insensitively");
+Assert(!sourceFingerprint.Matches(new DeviceFileFingerprint(8193, "aabbcc")),
+    "device fingerprints must reject size mismatches");
+Assert(!sourceFingerprint.Matches(new DeviceFileFingerprint(8192, "ddeeff")),
+    "device fingerprints must reject SHA-256 mismatches");
+
 Assert(LegacyWeChatKeyCandidateService.BuildLegacyKey("", "12345").Length == 7,
     "empty-device legacy key candidate should be supported");
 var compatibleCandidates = LegacyWeChatKeyCandidateService.ExtractCompatibleInfoCandidates(

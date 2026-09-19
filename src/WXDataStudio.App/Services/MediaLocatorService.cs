@@ -7,7 +7,7 @@ namespace WXDataStudio.App.Services;
 public sealed class MediaLocatorService
 {
     private readonly AdbService _adb;
-    private readonly ConcurrentDictionary<string, MediaResolution> _cache = new();
+    private readonly ConcurrentDictionary<MediaCacheKey, MediaResolution> _cache = new();
 
     public MediaLocatorService(AdbService adb)
     {
@@ -16,20 +16,24 @@ public sealed class MediaLocatorService
 
     public async Task<MediaResolution> ResolveAsync(DeviceInfo device, WeChatMessage message)
     {
-        var cacheKey = $"{device.Serial}:{message.LocalId}:{message.ImgPath}";
+        var cacheKey = new MediaCacheKey(
+            device.Serial,
+            device.AccountDirectory,
+            device.ExternalAccountDirectory,
+            message.Kind,
+            message.LocalId,
+            message.ImgPath);
         if (_cache.TryGetValue(cacheKey, out var cached)) return cached;
-        var root = device.ExternalMediaRoot;
-        if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(message.ImgPath))
+        if (string.IsNullOrWhiteSpace(message.ImgPath))
             return Cache(cacheKey, new MediaResolution { MessageId = message.LocalId, Kind = message.Kind });
 
         var token = SanitizeToken(message.ImgPath);
         if (string.IsNullOrWhiteSpace(token))
             return Cache(cacheKey, new MediaResolution { MessageId = message.LocalId, Kind = message.Kind });
 
-        var folders = FoldersFor(message.Kind);
         var found = new List<MediaCandidate>();
-        foreach (var folder in folders)
-            found.AddRange(await SearchFolderAsync(root, folder, token));
+        foreach (var location in GetSearchLocations(device, message.Kind))
+            found.AddRange(await SearchFolderAsync(location, token));
 
         return Cache(cacheKey, new MediaResolution
         {
@@ -40,19 +44,43 @@ public sealed class MediaLocatorService
     }
 
     private async Task<IEnumerable<MediaCandidate>> SearchFolderAsync(
-        string root, string folder, string token)
+        MediaSearchLocation location, string token)
     {
-        var dir = $"{root}/{folder}";
         var quoted = token.Replace("'", "", StringComparison.Ordinal);
-        var result = await _adb.ShellAsync(
-            $"find '{dir}' -type f -iname '*{quoted}*' 2>/dev/null | head -n 8");
+        var command =
+            $"find '{location.Directory}' -type f -iname '*{quoted}*' 2>/dev/null | head -n 8";
+        var result = location.RequiresRoot
+            ? await _adb.RootShellAsync(command)
+            : await _adb.ShellAsync(command);
         if (!result.Success && string.IsNullOrWhiteSpace(result.StdOut))
             return Array.Empty<MediaCandidate>();
         return result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(x => new MediaCandidate(x.Trim(), folder, true))
+            .Select(x => new MediaCandidate(x.Trim(), location.Role, true))
             .Where(x => !string.IsNullOrWhiteSpace(x.RemotePath))
             .ToArray();
     }
+
+    public static IReadOnlyList<MediaSearchLocation> GetSearchLocations(
+        DeviceInfo device, MessageKind kind)
+    {
+        var roots = new List<(string Path, bool RequiresRoot)>(2);
+        if (IsSafeAccountDirectory(device.AccountDirectory))
+            roots.Add(($"/data/user/0/com.tencent.mm/MicroMsg/{device.AccountDirectory}", true));
+        if (IsSafeAccountDirectory(device.ExternalAccountDirectory))
+            roots.Add((device.ExternalMediaRoot, false));
+
+        return roots
+            .SelectMany(root => FoldersFor(kind).Select(folder =>
+                new MediaSearchLocation($"{root.Path}/{folder}", folder, root.RequiresRoot)))
+            .DistinctBy(x => x.Directory, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsSafeAccountDirectory(string value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= 128 &&
+        value is not "." and not ".." &&
+        value.All(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.');
 
     private static string[] FoldersFor(MessageKind kind) => kind switch
     {
@@ -72,9 +100,22 @@ public sealed class MediaLocatorService
         return new string(value.Where(c => char.IsLetterOrDigit(c) || c is '_' or '-').ToArray());
     }
 
-    private MediaResolution Cache(string key, MediaResolution value)
+    private MediaResolution Cache(MediaCacheKey key, MediaResolution value)
     {
         _cache[key] = value;
         return value;
     }
+
+    private sealed record MediaCacheKey(
+        string Serial,
+        string AccountDirectory,
+        string ExternalAccountDirectory,
+        MessageKind Kind,
+        long MessageId,
+        string? ImagePath);
 }
+
+public sealed record MediaSearchLocation(
+    string Directory,
+    string Role,
+    bool RequiresRoot);
