@@ -632,6 +632,19 @@ using (var exportJson = System.Text.Json.JsonDocument.Parse(
 
 // Workspace to database writer, then SC1 re-encryption round trip: the restore
 // channel must produce a database that decrypts back to what we wrote.
+// Transfer / red packet payloads are built from amount and note fields.
+var moneyTransferXml = TransactionMessageTemplate.Build(MessageKind.Transfer, "¥88.88", "还款", "已收钱");
+var transferBack = TransactionMessageTemplate.Read(MessageKind.Transfer, moneyTransferXml);
+Assert(transferBack.Amount == "¥88.88" && transferBack.Note == "还款" && transferBack.Status == "已收钱",
+    "transfer template round trip mismatch");
+Assert(MessageTypeClassifier.Classify(49, moneyTransferXml) == MessageKind.Transfer,
+    "transfer template must classify as a transfer");
+var packetXml = TransactionMessageTemplate.Build(MessageKind.RedPacket, "¥200.00", "生日快乐", "");
+Assert(MessageTypeClassifier.Classify(49, packetXml) == MessageKind.RedPacket,
+    "red packet template must classify as a red packet");
+Assert(TransactionMessageTemplate.Read(MessageKind.RedPacket, packetXml).Amount == "¥200.00",
+    "red packet amount round trip mismatch");
+
 var writeDbPath = Path.Combine(root, "write-target.db");
 await using (var connection = new SqliteConnection(
     $"Data Source={writeDbPath};Pooling=False"))
@@ -700,6 +713,19 @@ Assert(writtenRows.Any(x => x.Content == "recovered new row" && x.IsOutgoing),
     "recovered row was not written as an outgoing message");
 Assert(writtenRows.Any(x => x.Content == "recovered incoming row"), "incoming recovered row missing");
 Assert(writtenRows.All(x => x.Content != "world"), "deleted row must be gone from the database");
+
+// Edits must survive leaving and re-entering a conversation.
+var savedRoot = Path.Combine(root, "workspace-store");
+await writeService.SaveAsync(writeWorkspace, savedRoot);
+var reloadedWorkspace = await writeService.FindSavedAsync(
+    savedRoot, root, writeWorkspace.ConversationId);
+Assert(reloadedWorkspace is not null, "saved edits for a conversation were not found");
+Assert(reloadedWorkspace!.Messages.Any(x => x.Content == "recovered hello"),
+    "content edit did not survive a reload");
+Assert(reloadedWorkspace.Messages.Any(x => x.IsDeleted),
+    "deleted flag did not survive a reload");
+Assert(reloadedWorkspace.Messages.Count(x => x.IsNew) == 2,
+    "recovered rows did not survive a reload");
 
 var sc1Service = new LegacySc1DatabaseService();
 var saltSource = Path.Combine(root, "salt-source.bin");

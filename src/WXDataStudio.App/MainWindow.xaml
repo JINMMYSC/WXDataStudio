@@ -200,7 +200,11 @@
                                     <MenuItem Header="名片" Click="OnAddContact"/>
                                     <MenuItem Header="链接 / 小程序" Click="OnAddLink"/>
                                     <MenuItem Header="引用消息" Click="OnAddQuote"/>
-                                    <MenuItem Header="纯文字" Click="OnAddText"/>
+                                <MenuItem Header="纯文字" Click="OnAddText"/>
+                                    <Separator/>
+                                    <MenuItem Header="转账" Tag="transfer" Click="OnAddMoneyMessage"/>
+                                    <MenuItem Header="红包" Tag="redpacket" Click="OnAddMoneyMessage"/>
+                                    <MenuItem Header="收付款" Tag="payment" Click="OnAddMoneyMessage"/>
                                 </MenuItem>
                             </Menu>
                             <ComboBox x:Name="SendAsBox" Grid.Column="1" Width="104" SelectedIndex="0" Margin="6,0,0,0"
@@ -282,6 +286,8 @@
                                                         <Button Content="换附件" Padding="12,5" Margin="6,0,0,0" Click="OnBubbleAttach"
                                                                 Visibility="{Binding HasMediaSlot, Converter={StaticResource BoolToVis}}"/>
                                                         <Button Content="详细字段" Padding="12,5" Margin="6,0,0,0" Click="OnBubbleDetails"/>
+                                                        <Button Content="改金额/备注" Padding="12,5" Margin="6,0,0,0" Click="OnBubbleMoney"
+                                                                Visibility="{Binding IsTransaction, Converter={StaticResource BoolToVis}}"/>
                                                     </WrapPanel>
                                                 </StackPanel>
                                                 <WrapPanel Margin="0,4,0,0"

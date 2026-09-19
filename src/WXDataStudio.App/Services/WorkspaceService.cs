@@ -192,6 +192,36 @@ public sealed class WorkspaceService
             ?? throw new InvalidDataException("Workspace JSON could not be parsed.");
     }
 
+    /// <summary>
+    /// Finds edits that were saved earlier for this conversation, so switching
+    /// chats and coming back never loses what the user already changed.
+    /// </summary>
+    public async Task<WorkspaceDocument?> FindSavedAsync(
+        string root, string? snapshotDirectory, string conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+        foreach (var file in Directory.EnumerateFiles(root, "workspace-*.json"))
+        {
+            try
+            {
+                var document = await LoadAsync(file);
+                if (!string.Equals(document.ConversationId, conversationId, StringComparison.Ordinal))
+                    continue;
+                if (!string.IsNullOrWhiteSpace(snapshotDirectory) &&
+                    !string.IsNullOrWhiteSpace(document.SourceSnapshotDirectory) &&
+                    !string.Equals(document.SourceSnapshotDirectory, snapshotDirectory,
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return document;
+            }
+            catch
+            {
+                // A damaged workspace file must not block loading a conversation.
+            }
+        }
+        return null;
+    }
+
     private static WorkspaceMessage GetEditable(WorkspaceDocument workspace, long id)
     {
         var msg = workspace.Messages.FirstOrDefault(x => x.LocalId == id)

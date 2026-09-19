@@ -114,6 +114,22 @@ public partial class MainWindow : Window
 
     private bool ComposerSendsOutgoing => SendAsBox?.SelectedIndex != 1;
 
+    private int PendingChangeCount =>
+        _workspace is null ? 0 : _diffService.GetDiffs(_workspace).Count;
+
+    /// <summary>
+    /// The write-back button shows how many changes are waiting, and stays
+    /// disabled when there is nothing to send, so "no reaction" cannot happen
+    /// silently.
+    /// </summary>
+    private void UpdateWriteBackState()
+    {
+        if (HeaderWriteBackButton is null) return;
+        var pending = PendingChangeCount;
+        HeaderWriteBackButton.Content = pending > 0 ? $"写回手机（{pending}）" : "写回手机";
+        HeaderWriteBackButton.IsEnabled = _workspace is not null && pending > 0;
+    }
+
     private string ComposerSender =>
         ComposerSendsOutgoing ? "" : (SenderNameBox?.Text ?? "").Trim();
 
@@ -163,6 +179,7 @@ public partial class MainWindow : Window
         MessageFilter.SelectedIndex = 0;
         ApplyMessageFilter();
         SelectBubbleFor(message);
+        UpdateWriteBackState();
         SetStatus("已添加一条记录；确认没问题后点右上角【写回手机】。");
         UpdateGuideHint("新记录已经在聊天里了。要继续改别的，点那条消息就行；改完点【写回手机】。");
     }
@@ -177,6 +194,83 @@ public partial class MainWindow : Window
     private static ChatBubble? BubbleOf(object sender) =>
         (sender as FrameworkElement)?.DataContext as ChatBubble;
 
+    /// <summary>
+    /// Rebuilds the editable copy from the database that is now on the phone, so
+    /// the screen shows the real phone state and nothing looks "pending".
+    /// </summary>
+    private async Task AdoptPhoneStateAsync(string verifiedPlaintextPath, ConversationItem conversation)
+    {
+        try
+        {
+            var options = new DatabaseOpenOptions { ReadOnly = true };
+            var messages = await _dbReader.LoadMessagesAsync(
+                verifiedPlaintextPath, conversation.Username, options, 100000);
+            if (messages.Count == 0) return;
+            _currentMessages = messages;
+            _workspace = _workspaceService.Create(
+                _latestSnapshotDirectory ?? "", conversation, messages);
+            await AutoSaveWorkspaceAsync();
+            ApplyMessageFilter();
+            UpdateWriteBackState();
+            SetStatus($"手机上的这个聊天现在有 {messages.Count:N0} 条记录，和这里显示的一致。");
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Adopting phone state failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Transfer / red packet / payment entry with amount and note fields.</summary>
+    private async void OnAddMoneyMessage(object sender, RoutedEventArgs e)
+    {
+        if (_workspace is null)
+        {
+            SetStatus("先在左边点一个聊天，再添加转账或红包。");
+            return;
+        }
+        var kind = ((sender as MenuItem)?.Tag as string) switch
+        {
+            "redpacket" => MessageKind.RedPacket,
+            "payment" => MessageKind.Payment,
+            _ => MessageKind.Transfer
+        };
+        var input = MoneyMessageDialog.Show(this, kind, "", "", "");
+        if (input is null) return;
+        var content = TransactionMessageTemplate.Build(
+            input.Kind, input.Amount, input.Note, input.Status);
+        var message = _workspaceService.AddMessage(
+            _workspace, input.Kind, content, null, null,
+            ComposerSendsOutgoing, ComposerSender);
+        await AutoSaveWorkspaceAsync();
+        ApplyMessageFilter();
+        SelectBubbleFor(message);
+        UpdateWriteBackState();
+        SetStatus("已添加一条交易类记录；想改金额就在气泡里点【改金额/备注】。");
+    }
+
+    private async void OnBubbleMoney(object sender, RoutedEventArgs e)
+    {
+        if (BubbleOf(sender) is not { } bubble ||
+            bubble.Source is not WorkspaceMessage message || _workspace is null)
+            return;
+        var current = TransactionMessageTemplate.Read(message.Kind, message.Content);
+        var input = MoneyMessageDialog.Show(this, message.Kind, current.Amount, current.Note, current.Status);
+        if (input is null) return;
+        var content = TransactionMessageTemplate.Build(
+            input.Kind, input.Amount, input.Note, input.Status);
+        _workspaceService.EditContent(_workspace, message.LocalId, content);
+        bubble.Body = ChatExportService.Describe(new WeChatMessage
+        {
+            Kind = input.Kind,
+            Content = content,
+            IsOutgoing = message.IsOutgoing
+        });
+        bubble.IsEditing = false;
+        await AutoSaveWorkspaceAsync();
+        UpdateWriteBackState();
+        SetStatus("金额/备注已更新。");
+    }
+
     private async void OnBubbleSave(object sender, RoutedEventArgs e)
     {
         if (BubbleOf(sender) is not { } bubble ||
@@ -186,6 +280,7 @@ public partial class MainWindow : Window
         bubble.Body = bubble.EditText;
         bubble.IsEditing = false;
         await AutoSaveWorkspaceAsync();
+        UpdateWriteBackState();
         SetStatus("已保存这条修改（还在电脑上，点【写回手机】才会同步到微信）。");
     }
 
@@ -208,6 +303,7 @@ public partial class MainWindow : Window
         {
             await AutoSaveWorkspaceAsync();
             ApplyMessageFilter();
+            UpdateWriteBackState();
             SetStatus("已删除这条记录。点【写回手机】后手机上也会删除。");
         }
     }
@@ -1053,9 +1149,9 @@ public partial class MainWindow : Window
                 _manualDatabaseKeyIsRawHex ? _manualDatabaseKey : null,
                 _workspace);
 
-            HeaderWriteBackButton.IsEnabled = false;
             SetStatus("正在写回手机：备份原库 → 写入 → 重启微信 → 校验，请勿断开数据线…");
             UpdateGuideHint("正在写回手机：备份原库 → 写入 → 重启微信 → 校验，请勿断开数据线。");
+            HeaderWriteBackButton.IsEnabled = false;
             var result = await new PhoneRestoreService(_adb).RestoreAsync(request, AddLog);
             AddLog($"Write-back finished: success={result.Success}; updated={result.UpdatedRows}; " +
                    $"inserted={result.InsertedRows}; verified={result.VerifiedRows}.");
@@ -1065,6 +1161,8 @@ public partial class MainWindow : Window
             SetStatus(result.Success
                 ? $"写回完成：改了 {result.UpdatedRows} 条、新增 {result.InsertedRows} 条，手机回读校验 {result.VerifiedRows}/{_workspace.Messages.Count}。"
                 : "写回未完全成功，详见弹窗里的步骤说明。");
+            if (result.Success && result.VerifiedPlaintextPath is not null && _currentConversation is not null)
+                await AdoptPhoneStateAsync(result.VerifiedPlaintextPath, _currentConversation);
             MessageBox.Show(
                 (result.Success ? "写回完成并通过回读校验。\n\n" : "写回未完全成功。\n\n") +
                 $"更新行：{result.UpdatedRows}\n新增行：{result.InsertedRows}\n" +
@@ -1082,7 +1180,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            HeaderWriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
+            UpdateWriteBackState();
         }
     }
 
@@ -1189,15 +1287,35 @@ public partial class MainWindow : Window
                 _currentMessages = await _dbReader.LoadMessagesAsync(
                     _currentDbPath, conversation.Username, options);
                 // Editing is the point of this tool, so the editable copy is
-                // opened automatically; the user never has to manage it.
-                _workspace = _workspaceService.Create(
-                    _latestSnapshotDirectory ?? "", conversation, _currentMessages);
+                // opened automatically. Earlier edits for this conversation are
+                // reloaded so switching chats never loses work.
+                var workspaceRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    "WXDataStudio", "workspaces");
+                var saved = await _workspaceService.FindSavedAsync(
+                    workspaceRoot, _latestSnapshotDirectory, conversation.Username);
+                if (saved is not null)
+                {
+                    _workspace = saved;
+                    AddLog($"Restored saved edits for {conversation.EffectiveName}.");
+                }
+                else
+                {
+                    _workspace = _workspaceService.Create(
+                        _latestSnapshotDirectory ?? "", conversation, _currentMessages);
+                }
                 SetAddButtonsEnabled(true);
                 ApplyMessageFilter();
+                UpdateWriteBackState();
                 AddLog($"Loaded {_currentMessages.Count:N0} messages: {conversation.EffectiveName}");
                 SetEmptyState(false);
-                SetStatus($"这个聊天有 {_currentMessages.Count:N0} 条记录。点中间任意一条，右边就能改；改完点【保存修改】。");
-                UpdateGuideHint("改好内容后点【保存修改】，再点右上角【写回手机】就能同步到微信。");
+                var pending = PendingChangeCount;
+                SetStatus(pending > 0
+                    ? $"这个聊天有 {_currentMessages.Count:N0} 条记录，其中 {pending} 处改动还没写回手机。"
+                    : $"这个聊天有 {_currentMessages.Count:N0} 条记录。点任意一条就能就地修改。");
+                UpdateGuideHint(pending > 0
+                    ? $"有 {pending} 处改动在电脑上，点右上角【写回手机（{pending}）】同步到微信。"
+                    : "点中间任意一条消息就能就地改；改完点右上角【写回手机】同步到微信。");
             }
             catch (Exception ex)
             {
@@ -1677,7 +1795,7 @@ public partial class MainWindow : Window
         PropertyAttachment.IsReadOnly = !allow;
         EditButton.IsEnabled = allow;
         UndoButton.IsEnabled = allow;
-        HeaderWriteBackButton.IsEnabled = _workspace is not null && _device?.RootAvailable == true;
+        UpdateWriteBackState();
         ReplaceMediaButton.IsEnabled = allow &&
             SelectedWorkspaceMessage is { } workspaceMessage &&
             MessageKindPolicy.HasExternalMedia(workspaceMessage.Kind);

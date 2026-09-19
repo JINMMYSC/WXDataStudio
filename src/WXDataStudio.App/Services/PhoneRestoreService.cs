@@ -23,6 +23,7 @@ public sealed record PhoneRestoreResult(
     string? RestorePackagePath,
     string? RollbackPackagePath,
     string? DeviceBackupPath,
+    string? VerifiedPlaintextPath,
     int UpdatedRows,
     int InsertedRows,
     int VerifiedRows);
@@ -207,6 +208,7 @@ public sealed class PhoneRestoreService
                     : "Restore completed but only part of the workspace could be verified.",
                 steps, working, restorePackage, rollbackPath,
                 deviceBackupPath,
+                verifyPlain,
                 write.Updated, write.Inserted, verified);
         }
         catch (Exception ex)
@@ -300,5 +302,5 @@ public sealed class PhoneRestoreService
         IReadOnlyList<PhoneRestoreStep> steps,
         string working,
         string? deviceBackupPath = null) =>
-        new(false, message, steps, working, null, null, deviceBackupPath, 0, 0, 0);
+        new(false, message, steps, working, null, null, deviceBackupPath, null, 0, 0, 0);
 }
